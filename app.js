@@ -748,6 +748,7 @@
         <button type="button" class="botao" data-acao="abrir-ponto" data-id="${p.id}">${soLeitura(o) ? "Abrir o ponto" : "✏️ Lançar serviços e fotos"}</button>
         ${soLeitura(o) ? "" : `<button type="button" class="botao botao-claro" data-acao="cq-mover" data-id="${p.id}">${p.croqui ? "↔ Mudar lugar" : "📌 Marcar no croqui"}</button>`}
       </div>
+      ${soLeitura(o) ? "" : `<button type="button" class="link cq-excluir" data-acao="cq-excluir" data-id="${p.id}">🗑 Excluir ponto ${esc(p.nome)}</button>`}
     </div>`;
   }
 
@@ -2131,6 +2132,16 @@
         const idx = lista.findIndex((p) => p.id === estado.pontoId) + (alvo.dataset.acao === "ponto-ant" ? -1 : 1);
         if (lista[idx]) return irPara("ponto", { pontoId: lista[idx].id });
         return;
+      }
+      case "cq-excluir": { // do resumo do ponto no croqui, sem abrir o ponto
+        const p = pontoPorId(alvo.dataset.id);
+        if (!p || soLeitura(o)) return;
+        if (!confirm(`Excluir o ponto ${p.nome}? Os serviços dele saem da medição.${p.fotos.length ? ` As ${plural(p.fotos.length, "foto", "fotos")} continuam guardadas no celular e no banco.` : ""}`)) return;
+        o.pontos = o.pontos.filter((x) => x.id !== p.id);
+        estado.cqSel = null;
+        salvarAgora();
+        avisar(`Ponto ${p.nome} excluído.`);
+        return render();
       }
       case "excluir-ponto": {
         const p = ponto();

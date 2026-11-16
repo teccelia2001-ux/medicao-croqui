@@ -951,3 +951,4 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .opcao-sugerida { box-shadow: 0 0 0 3px #f97316; }
 .sug-operativo { font-size: 14px; color: var(--suave); }
 .sug-operativo b { font-size: 16px; color: #0f172a; letter-spacing: 0.5px; }
+.cq-excluir { justify-self: center; align-self: center; margin: 2px auto 0; color: #b91c1c; font-size: 14px; }
