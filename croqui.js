@@ -460,13 +460,20 @@
   // ------------------------------------------------------------------ imagens para o PDF
   /** Desenha uma marca de ponto no canvas (bolinha e nome com contorno branco). */
   function desenharMarca(ctx, x, y, nome, cor, r) {
+    // anel vazado (não cobre o projeto) com contorno branco e um pontinho no centro
+    const anel = Math.max(2, r * 0.3);
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = cor;
-    ctx.fill();
-    ctx.lineWidth = Math.max(2, r * 0.35);
+    ctx.lineWidth = anel + Math.max(2, r * 0.25);
     ctx.strokeStyle = "#fff";
     ctx.stroke();
+    ctx.lineWidth = anel;
+    ctx.strokeStyle = cor;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(1.5, r * 0.18), 0, Math.PI * 2);
+    ctx.fillStyle = cor;
+    ctx.fill();
     ctx.font = `700 ${Math.round(r * 2.1)}px Helvetica, Arial, sans-serif`;
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";

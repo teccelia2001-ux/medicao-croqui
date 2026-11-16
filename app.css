@@ -761,10 +761,11 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
   width: 22px;
   height: 22px;
   margin: -11px 0 0 -11px;
-  border: 3px solid #fff;
+  /* anel vazado: o projeto aparece por dentro; o pontinho marca o lugar exato */
+  border: 3px solid var(--cor, #ea580c);
   border-radius: 50%;
-  background: var(--cor, #ea580c);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  background: radial-gradient(circle, var(--cor, #ea580c) 0 2px, transparent 2.5px);
+  box-shadow: 0 0 0 1.5px #fff, inset 0 0 0 1.5px #fff;
 }
 .cq-marca span {
   margin-top: -11px;
@@ -779,7 +780,7 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-com { --cor: #15803d; }
 .cq-sem { --cor: #ea580c; }
 .cq-sel { --cor: var(--vermelho); z-index: 2; }
-.cq-sel i { width: 30px; height: 30px; margin: -15px 0 0 -15px; box-shadow: 0 0 0 4px rgba(225, 20, 20, 0.3), 0 1px 4px rgba(0, 0, 0, 0.45); }
+.cq-sel i { width: 30px; height: 30px; margin: -15px 0 0 -15px; border-width: 4px; box-shadow: 0 0 0 1.5px #fff, inset 0 0 0 1.5px #fff, 0 0 0 5px rgba(225, 20, 20, 0.15); }
 .cq-sel span { font-size: 15px; }
 .cq-movendo { opacity: 0.45; }
 .cq-alfinete::after {
@@ -791,7 +792,7 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
   height: 30px;
   border: 3px dashed var(--vermelho);
   border-radius: 50%;
-  background: rgba(225, 20, 20, 0.18);
+  background: radial-gradient(circle, var(--vermelho) 0 2px, transparent 2.5px);
   animation: cq-pulso 1.2s ease-in-out infinite;
 }
 @keyframes cq-pulso { 50% { transform: scale(1.25); } }
