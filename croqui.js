@@ -630,17 +630,24 @@
     for (const b of data.blocks || []) {
       for (const par of b.paragraphs) {
         for (const linha of par.lines) {
-          for (const pal of linha.words) {
+          linha.words.forEach((pal, k) => {
             // "(P1)" das notas do projeto não é o nome do poste: só a palavra sozinha vale
             const texto = pal.text.trim().toUpperCase().replace(/[,;:|]+$/, "");
             const m = ROTULO_POSTE.exec(texto);
-            if (!m || pal.confidence < 25) continue;
+            if (!m || pal.confidence < 25) return;
             const num = m[1].replace(/[LI]/g, "1").replace(/O/g, "0");
             const { x0, x1, y0, y1 } = pal.bbox;
             // o rótulo com prefixo (F.P1) ganha de um "P1" solto perto do toque
             const d = Math.hypot((x0 + x1) / 2 - im.w / 2, (y0 + y1) / 2 - im.h / 2) + (texto.startsWith("P") ? im.w / 4 : 0);
-            if (!melhor || d < melhor.d) melhor = { nome: "P" + num, texto, d };
-          }
+            if (melhor && d >= melhor.d) return;
+            // o "(P1)" verde logo antes do F.P2 é o que identifica o ponto: o nome vem dele
+            // (o OCR às vezes perde um dos parênteses ou o P: "(P1", "1)")
+            const ant = k > 0 ? /^(?:\(P?([0-9LIO]{1,3})\)?|P?([0-9LIO]{1,3})\))$/.exec(linha.words[k - 1].text.trim().toUpperCase()) : null;
+            const apelido = ant ? (ant[1] || ant[2]).replace(/[LI]/g, "1").replace(/O/g, "0") : "";
+            melhor = apelido && /^\d+$/.test(apelido)
+              ? { nome: "P" + apelido, texto: `(P${apelido}) ${texto}`, d }
+              : { nome: "P" + num, texto, d };
+          });
         }
       }
     }
