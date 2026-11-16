@@ -56,7 +56,7 @@ self.addEventListener("fetch", (e) => {
     if (url.hostname === "cdnjs.cloudflare.com") e.respondWith(caches.match(req).then((r) => r || fetch(req)));
     if (url.hostname === "cdn.jsdelivr.net") {
       e.respondWith(caches.open(CACHE_OCR).then((c) => c.match(req).then((r) => r || fetch(req).then((resp) => {
-        if (resp.ok) c.put(req, resp.clone());
+        if (resp.ok || resp.type === "opaque") c.put(req, resp.clone()); // script de <script> e importScripts vem opaco
         return resp;
       }))));
     }
