@@ -113,6 +113,78 @@
     return f;
   }
 
+  // ------------------------------------------------------------------ nome do ponto no branco
+  /** Mapa de onde tem desenho num canvas (reduzido `f` vezes, em soma acumulada): diz
+   *  rápido quanto desenho cai dentro de um retângulo. */
+  function mapaTinta(cv, f = 2) {
+    const W = cv.width, H = cv.height, gw = Math.ceil(W / f), gh = Math.ceil(H / f);
+    const d = cv.getContext("2d").getImageData(0, 0, W, H).data;
+    const tinta = new Uint8Array(gw * gh);
+    for (let y = 0, i = 0; y < H; y++) {
+      const linha = ((y / f) | 0) * gw;
+      for (let x = 0; x < W; x++, i += 4) {
+        if (Math.min(d[i], d[i + 1], d[i + 2]) < 200) tinta[linha + ((x / f) | 0)] = 1;
+      }
+    }
+    const soma = new Uint32Array((gw + 1) * (gh + 1));
+    for (let y = 0; y < gh; y++) {
+      let acc = 0;
+      for (let x = 0; x < gw; x++) {
+        acc += tinta[y * gw + x];
+        soma[(y + 1) * (gw + 1) + x + 1] = soma[y * (gw + 1) + x + 1] + acc;
+      }
+    }
+    return { f, gw, gh, soma };
+  }
+  /** quanto desenho (em células do mapa) cai no retângulo { x0, y0, x1, y1 } em px do canvas */
+  function tintaEm(m, r) {
+    const lim = (v, max) => Math.max(0, Math.min(max, v));
+    const a = lim(Math.floor(r.x0 / m.f), m.gw), b = lim(Math.floor(r.y0 / m.f), m.gh);
+    const c = lim(Math.ceil(r.x1 / m.f), m.gw), e = lim(Math.ceil(r.y1 / m.f), m.gh);
+    if (c <= a || e <= b) return 0;
+    const L = m.gw + 1;
+    return m.soma[e * L + c] - m.soma[b * L + c] - m.soma[e * L + a] + m.soma[b * L + a];
+  }
+  /** área (px²) do retângulo `r` que fica fora da imagem W x H (o nome não pode fugir dela) */
+  function foraDa(r, W, H) {
+    const dentro = Math.max(0, Math.min(r.x1, W) - Math.max(r.x0, 0)) * Math.max(0, Math.min(r.y1, H) - Math.max(r.y0, 0));
+    return (r.x1 - r.x0) * (r.y1 - r.y0) - dentro;
+  }
+  /** área (px²) do retângulo `r` que cai em cima dos outros */
+  function sobreposicao(r, outros) {
+    let s = 0;
+    for (const o of outros) s += Math.max(0, Math.min(r.x1, o.x1) - Math.max(r.x0, o.x0)) * Math.max(0, Math.min(r.y1, o.y1) - Math.max(r.y0, o.y0));
+    return s;
+  }
+  /** Canto do nome (dx, dy do canto de cima à esquerda, a partir do ponto) com menor
+   *  `custo`: à direita, à esquerda, nas diagonais, em cima e embaixo da bolinha de raio `r`;
+   *  se em volta só tem desenho, vai se afastando na mesma direção até achar um branco
+   *  (`longe`: precisa da linha fina ligando o nome ao ponto). */
+  function melhorLugar(r, w, h, g, custo, unidade = 1) { // unidade: 1% do nome, no custo
+    const d = r * 0.7;
+    const perto = [
+      [r + g, -h / 2], [-r - g - w, -h / 2],
+      [d, -d - h], [d, d], [-d - w, -d - h], [-d - w, d],
+      [-w / 2, -r - g - h], [-w / 2, r + g],
+    ];
+    let melhor = null;
+    for (const [passo, afasta] of [0, 1, 2, 3, 4.5, 6].entries()) {
+      perto.forEach(([dx, dy], k) => {
+        // direção do ponto para o meio do nome
+        const cx = dx + w / 2, cy = dy + h / 2, n = Math.hypot(cx, cy) || 1;
+        const ex = (cx / n) * afasta * h, ey = (cy / n) * afasta * h;
+        // empate: mais perto e na ordem acima (direita primeiro); longe custa um pouco
+        const c = custo(dx + ex, dy + ey) + k * 0.2 * unidade + afasta * 3 * unidade + (passo ? 2 * unidade : 0);
+        if (!melhor || c < melhor.c) melhor = { dx: dx + ex, dy: dy + ey, c, longe: afasta > 0 };
+      });
+    }
+    return melhor;
+  }
+  /** ponto da borda do retângulo do nome mais perto do centro (para a linha fina) */
+  function pontaDaGuia(dx, dy, w, h) {
+    return [Math.max(dx, Math.min(0, dx + w)), Math.max(dy, Math.min(0, dy + h))];
+  }
+
   // ------------------------------------------------------------------ visor
   class Visor {
     constructor() {
@@ -189,6 +261,8 @@
         throw e;
       }
       if (pedido !== this._pedido) return;
+      this._tinta = mapaTinta(this.base); // onde tem desenho: os nomes dos pontos fogem dele
+      this._sNomes = null;
       this.msg("");
       this.base.hidden = false;
       this._ajustado = false;
@@ -248,8 +322,51 @@
 
     /** pontos marcados nesta folha: [{ id, nome, x, y, classe }] */
     marcas(lista) {
-      this.marcasEl.innerHTML = lista.map((m) => `<button type="button" class="cq-marca ${m.classe || ""}" data-id="${esc(m.id)}" data-x="${m.x}" data-y="${m.y}" aria-label="${esc(m.nome)}"><i></i><span>${esc(m.nome)}</span></button>`).join("");
+      this.marcasEl.innerHTML = lista.map((m) => `<button type="button" class="cq-marca ${m.classe || ""}" data-id="${esc(m.id)}" data-x="${m.x}" data-y="${m.y}" aria-label="${esc(m.nome)}"><i></i><b class="cq-guia" hidden></b><span>${esc(m.nome)}</span></button>`).join("");
+      this._medidas = null; // tamanho dos nomes e das bolinhas: mede de novo
+      this._sNomes = null;
       this._posicionarMarcas();
+    }
+
+    /** Põe o nome de cada ponto no lado com menos desenho do projeto em volta (para não
+     *  cobrir as descrições), sem cair em cima de outro ponto. Só muda com o zoom. */
+    _arrumarNomes() {
+      if (!this._tinta || !this.W || this._sNomes === this.s) return;
+      const bs = [...this.marcasEl.children];
+      if (!bs.length) return;
+      if (!this._medidas) {
+        const med = bs.map((b) => {
+          const sp = b.lastElementChild, ic = b.firstElementChild;
+          return { w: sp.offsetWidth, h: sp.offsetHeight, r: ic.offsetWidth / 2 };
+        });
+        if (med.some((m) => !m.w)) return; // visor ainda fora da tela: mede depois
+        this._medidas = med;
+      }
+      this._sNomes = this.s;
+      const k = this.sb / this.s; // px da tela → px da imagem base
+      const pts = bs.map((b, i) => ({ x: Number(b.dataset.x) * this.W * this.sb, y: Number(b.dataset.y) * this.H * this.sb, ...this._medidas[i] }));
+      const ocupados = pts.map((p) => ({ x0: p.x - p.r * k, y0: p.y - p.r * k, x1: p.x + p.r * k, y1: p.y + p.r * k }));
+      // o ponto escolhido arruma o nome primeiro
+      const ordem = pts.map((_, i) => i).sort((a, c) => (bs[c].classList.contains("cq-sel") ? 1 : 0) - (bs[a].classList.contains("cq-sel") ? 1 : 0));
+      for (const i of ordem) {
+        const p = pts[i];
+        const f2 = this._tinta.f * this._tinta.f;
+        const lugar = melhorLugar(p.r, p.w, p.h, 3, (dx, dy) => {
+          const ret = { x0: p.x + dx * k, y0: p.y + dy * k, x1: p.x + (dx + p.w) * k, y1: p.y + (dy + p.h) * k };
+          return tintaEm(this._tinta, ret) + (sobreposicao(ret, ocupados) + foraDa(ret, this.base.width, this.base.height)) * 4 / f2;
+        }, (p.w * p.h * k * k) / f2 / 100);
+        ocupados.push({ x0: p.x + lugar.dx * k, y0: p.y + lugar.dy * k, x1: p.x + (lugar.dx + p.w) * k, y1: p.y + (lugar.dy + p.h) * k });
+        bs[i].lastElementChild.style.transform = `translate(${Math.round(lugar.dx)}px, ${Math.round(lugar.dy)}px)`;
+        // nome afastado: linha fina da bolinha até ele
+        const guia = bs[i].querySelector(".cq-guia");
+        if (lugar.longe) {
+          const [gx, gy] = pontaDaGuia(lugar.dx, lugar.dy, p.w, p.h);
+          const comp = Math.hypot(gx, gy) - p.r;
+          guia.style.width = `${Math.max(0, comp)}px`;
+          guia.style.transform = `rotate(${Math.atan2(gy, gx)}rad) translateX(${p.r}px)`;
+          guia.hidden = comp <= 2;
+        } else guia.hidden = true;
+      }
     }
 
     /** alfinete provisório (onde o supervisor tocou), ou null para tirar */
@@ -305,6 +422,7 @@
 
     _posicionarMarcas() {
       if (!this.W) return;
+      this._arrumarNomes();
       for (const b of this.marcasEl.children) {
         const x = this.tx + Number(b.dataset.x) * this.W * this.s;
         const y = this.ty + Number(b.dataset.y) * this.H * this.s;
@@ -458,8 +576,11 @@
   }
 
   // ------------------------------------------------------------------ imagens para o PDF
-  /** Desenha uma marca de ponto no canvas (bolinha e nome com contorno branco). */
-  function desenharMarca(ctx, x, y, nome, cor, r) {
+  const fonteMarca = (r) => `700 ${Math.round(r * 2.1)}px Helvetica, Arial, sans-serif`;
+
+  /** Desenha uma marca de ponto no canvas: bolinha e o nome com contorno branco, com o
+   *  canto de cima à esquerda do nome em (x + lx, y + ly). */
+  function desenharMarca(ctx, x, y, nome, cor, r, lx = r * 1.5, ly = -r * 1.05) {
     // anel vazado (não cobre o projeto) com contorno branco e um pontinho no centro
     const anel = Math.max(2, r * 0.3);
     ctx.beginPath();
@@ -474,14 +595,14 @@
     ctx.arc(x, y, Math.max(1.5, r * 0.18), 0, Math.PI * 2);
     ctx.fillStyle = cor;
     ctx.fill();
-    ctx.font = `700 ${Math.round(r * 2.1)}px Helvetica, Arial, sans-serif`;
+    ctx.font = fonteMarca(r);
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";
     ctx.lineWidth = Math.max(3, r * 0.6);
     ctx.strokeStyle = "#fff";
-    ctx.strokeText(nome, x + r * 1.5, y);
+    ctx.strokeText(nome, x + lx, y + ly + r * 1.05);
     ctx.fillStyle = cor;
-    ctx.fillText(nome, x + r * 1.5, y);
+    ctx.fillText(nome, x + lx, y + ly + r * 1.05);
   }
 
   /** Imagem (JPEG) da folha ou de um pedaço dela, com os pontos marcados.
@@ -509,9 +630,42 @@
     const ctx = cv.getContext("2d");
     await f.desenhar(ctx, escala, dx, dy, true).promise;
     const r = Math.max(6, Math.round(Math.max(w, h) / (recorte ? 100 : 130)));
+    // o nome de cada ponto vai para o lado com menos desenho (não cobre as descrições)
+    const tinta = marcas.length ? mapaTinta(cv, 2) : null;
+    const pts = marcas.map((m) => {
+      const rm = m.destaque ? r * 1.25 : r;
+      ctx.font = fonteMarca(rm);
+      return { m, x: m.x * f.W * escala - dx, y: m.y * f.H * escala - dy, r: rm, w: ctx.measureText(m.nome).width, h: rm * 2.1 };
+    });
+    const ocupados = pts.map((p) => ({ x0: p.x - p.r, y0: p.y - p.r, x1: p.x + p.r, y1: p.y + p.r }));
+    for (const p of [...pts].sort((a, b) => (b.m.destaque ? 1 : 0) - (a.m.destaque ? 1 : 0))) {
+      const f2 = tinta.f * tinta.f;
+      const l = melhorLugar(p.r, p.w, p.h, p.r * 0.4, (lx, ly) => {
+        const ret = { x0: p.x + lx, y0: p.y + ly, x1: p.x + lx + p.w, y1: p.y + ly + p.h };
+        return tintaEm(tinta, ret) + (sobreposicao(ret, ocupados) + foraDa(ret, w, h)) * 4 / f2;
+      }, (p.w * p.h) / f2 / 100);
+      p.lx = l.dx;
+      p.ly = l.dy;
+      p.longe = l.longe;
+      ocupados.push({ x0: p.x + l.dx, y0: p.y + l.dy, x1: p.x + l.dx + p.w, y1: p.y + l.dy + p.h });
+    }
     // as outras primeiro; a do ponto em destaque por cima
-    for (const m of [...marcas].sort((a, b) => (a.destaque ? 1 : 0) - (b.destaque ? 1 : 0))) {
-      desenharMarca(ctx, m.x * f.W * escala - dx, m.y * f.H * escala - dy, m.nome, m.cor, m.destaque ? r * 1.25 : r);
+    for (const p of [...pts].sort((a, b) => (a.m.destaque ? 1 : 0) - (b.m.destaque ? 1 : 0))) {
+      if (p.longe) {
+        // nome afastado para achar um branco: linha fina da bolinha até ele
+        const [gx, gy] = pontaDaGuia(p.lx, p.ly, p.w, p.h);
+        const n = Math.hypot(gx, gy) || 1;
+        ctx.beginPath();
+        ctx.moveTo(p.x + (gx / n) * p.r, p.y + (gy / n) * p.r);
+        ctx.lineTo(p.x + gx, p.y + gy);
+        ctx.lineWidth = Math.max(1, p.r * 0.15) + 2;
+        ctx.strokeStyle = "#fff";
+        ctx.stroke();
+        ctx.lineWidth = Math.max(1, p.r * 0.15);
+        ctx.strokeStyle = p.m.cor;
+        ctx.stroke();
+      }
+      desenharMarca(ctx, p.x, p.y, p.m.nome, p.m.cor, p.r, p.lx, p.ly);
     }
     if (canvas) return { cv, w, h };
     return { url: cv.toDataURL("image/jpeg", 0.85), w, h };
