@@ -1066,26 +1066,22 @@
     [/\bCHAVE FUSIVEL\b/, "Chave fusível", (d) => /^CHAVE FUSIVEL <=/.test(d)],
   ];
 
-  /** Serviços do catálogo que servem: do 1º departamento que tiver (ou de todos, na ordem). */
-  function candidatos(filtro, deps, todos = false) {
+  /** Serviços do catálogo que servem, de LM e de LV: o projeto é só sugestão, quem
+   *  escolhe o departamento é o supervisor (nem sempre se faz como foi projetado). */
+  function candidatos(filtro, deps) {
     const junto = [];
-    for (const dep of deps) {
-      const gs = grupos().filter((g) => g.departamento === dep && filtro(MAIUSC(g.descricao)));
-      if (gs.length && !todos) return gs.slice(0, 4);
-      junto.push(...gs);
-    }
-    return junto.slice(0, 4);
+    for (const dep of deps) junto.push(...grupos().filter((g) => g.departamento === dep && filtro(MAIUSC(g.descricao))));
+    return junto.slice(0, 6);
   }
 
-  /** { lv, operativo, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
+  /** { operativo, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
   function sugestoesDoProjeto(lido) {
-    const lv = lido.linhas.some((l) => /LINHA\s*VIVA/.test(MAIUSC(l.texto)));
-    const deps = lv ? [LV, LM] : [LM, LV];
+    const deps = [LM, LV];
     const lista = [], outros = [];
     let operativo = "";
     for (const l of lido.linhas) {
       const t = MAIUSC(l.texto);
-      if (/LINHA\s*VIVA/.test(t)) continue;
+      if (/LINHA\s*VIVA/.test(t)) { outros.push("LINHA VIVA"); continue; }
       // número sozinho no alto da pilha (118106): número operativo do equipamento
       if (/^\d{5,7}$/.test(t.trim())) { operativo = operativo || t.trim(); continue; }
       // vermelho entra; cinza riscado sai; nota (cinza sem risco) diz pelo verbo
@@ -1124,7 +1120,7 @@
       for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
       if (lista.length === antes && !mp && !cf && !fus) outros.push(l.texto);
     }
-    return { lv, operativo, lista, outros: [...new Set(outros)] };
+    return { operativo, lista, outros: [...new Set(outros)] };
   }
 
   // leitura feita uma vez por lugar do ponto (enquanto o app está aberto)
@@ -1146,7 +1142,9 @@
         lidosProjeto.set(k, r);
         // só troca o cartão: refazer a tela fecharia o teclado de quem está digitando
         const el = document.getElementById("do-projeto");
-        if (el && estado.tela === "ponto" && ponto() === p) el.outerHTML = doProjetoHtml(o, p);
+        // pelo id: a obra pode ter sido recarregada do banco no meio da leitura (objetos novos)
+        const atual = estado.tela === "ponto" ? ponto() : null;
+        if (el && atual && atual.id === p.id && estado.obra) el.outerHTML = doProjetoHtml(estado.obra, atual);
       })();
     }
     return lidosProjeto.get(k);
@@ -1155,26 +1153,35 @@
   function doProjetoHtml(o, p) {
     if (p.geral || !p.croqui || !o.projeto || soLeitura(o)) return "";
     const r = doProjeto(o, p);
-    const topo = (extra = "") => `<div class="linha-topo"><b>📐 No projeto${r.lido?.poste ? ` <small>${esc(r.lido.poste)}${r.lido.apelido ? ` ${esc(r.lido.apelido)}` : ""}</small>` : ""}</b>${extra}</div>`;
+    // só o P que identifica o ponto: o "(P1)" do projeto; sem ele, o número do F.P2
+    const id = r.lido ? (r.lido.apelido || r.lido.poste).replace(/[()]/g, "").replace(/^[A-Z]{1,3}\.?(?=P)/, "") : "";
+    const topo = () => `<div class="linha-topo"><b>📐 No projeto${id ? ` <small>${esc(id)}</small>` : ""}</b></div>`;
     if (r.lendo) return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">🔎 Lendo o que o projeto pede neste poste…</small></section>`;
     if (r.erro) return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">Não deu para ler o projeto agora${navigator.onLine ? "" : " (o leitor precisa de internet na 1ª vez)"}.</small></section>`;
-    const s = r.lido ? sugestoesDoProjeto(r.lido) : { lista: [], outros: [] };
+    let s = { lista: [], outros: [] };
+    try {
+      if (r.lido) s = sugestoesDoProjeto(r.lido);
+    } catch (e) {
+      console.warn("sugestões do projeto:", e); // a tela do ponto continua funcionando
+    }
     if (!s.lista.length && !s.outros.length && !s.operativo) {
       return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">${r.lido ? "O projeto não escreve serviço neste poste." : "Não achei o nome do poste no projeto perto deste ponto."}</small></section>`;
     }
+    // o que já foi lançado (em LM ou LV, com o mesmo tipo) sai da sugestão
     const lancado = (g, op) => p.itens.some((i) => i.codigo === g.codigo && i.departamento === g.departamento && (!op || i.operacao === op));
-    const linhas = s.lista.map((x) => `<div class="sug">
+    const faltam = s.lista.filter((x) => !x.cands.some((g) => lancado(g, x.op)));
+    const linhas = faltam.map((x) => `<div class="sug">
         <div class="sug-topo">${x.op ? `<span class="sug-op sug-${x.op.toLowerCase()}">${ROTULO[x.op]}</span>` : ""}<b>${x.qtd ? `${esc(x.qtd)} × ` : ""}${esc(x.rotulo)}</b></div>
-        <div class="sug-cands">${x.cands.map((g) => {
-          const ja = lancado(g, x.op);
-          return `<button type="button" class="sug-cand${ja ? " sug-ja" : ""}" data-acao="sugestao" data-chave="${esc(g.chave)}" data-qtd="${esc(x.qtd)}" data-op="${x.op}">
-            ${ja ? "✓ " : ""}<b>${esc(g.codigo)}</b> ${esc(g.descricao)} <i class="sigla sigla-${esc(sigla(g.departamento).replace("&", "").toLowerCase())}">${esc(sigla(g.departamento))}</i></button>`;
-        }).join("")}</div>
+        <div class="sug-cands">${x.cands.map((g) => `<button type="button" class="sug-cand" data-acao="sugestao" data-chave="${esc(g.chave)}" data-qtd="${esc(x.qtd)}" data-op="${x.op}">
+            <b>${esc(g.codigo)}</b> ${esc(g.descricao)} <i class="sigla sigla-${esc(sigla(g.departamento).replace("&", "").toLowerCase())}">${esc(sigla(g.departamento))}</i></button>`).join("")}</div>
       </div>`).join("");
+    const feitos = s.lista.length - faltam.length;
     return `<section class="cartao do-projeto" id="do-projeto">
-      ${topo(s.lv ? `<i class="sigla sigla-lv">LINHA VIVA</i>` : "")}
+      ${topo()}
       ${s.operativo ? `<div class="sug-operativo">Nº operativo <b>${esc(s.operativo)}</b></div>` : ""}
-      ${linhas ? `<small class="sub">Toque no serviço para conferir a quantidade e lançar o que foi feito.</small>${linhas}` : ""}
+      ${linhas ? `<small class="sub">Toque no serviço para conferir a quantidade e lançar o que foi feito.</small>${linhas}`
+        : s.lista.length ? `<small class="sub">✓ Tudo o que o projeto pede neste poste já foi lançado.</small>` : ""}
+      ${linhas && feitos ? `<small class="sub">✓ ${plural(feitos, "sugestão já lançada", "sugestões já lançadas")}.</small>` : ""}
       ${s.outros.length ? `<small class="sub sug-outros">Também escrito no projeto: ${s.outros.map(esc).join(" · ")}</small>` : ""}
     </section>`;
   }
