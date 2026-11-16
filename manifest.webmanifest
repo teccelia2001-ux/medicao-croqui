@@ -1,0 +1,18 @@
+{
+  "name": "Medição por Croqui - Teccel",
+  "short_name": "Croqui",
+  "description": "Medição de obra pelo croqui do projeto: toque no poste e lance os serviços.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f6f9",
+  "theme_color": "#e11414",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "icones/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icones/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icones/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
