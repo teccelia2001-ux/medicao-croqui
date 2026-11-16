@@ -1066,12 +1066,15 @@
     [/\bCHAVE FUSIVEL\b/, "Chave fusível", (d) => /^CHAVE FUSIVEL <=/.test(d)],
   ];
 
-  function candidatos(filtro, deps) {
+  /** Serviços do catálogo que servem: do 1º departamento que tiver (ou de todos, na ordem). */
+  function candidatos(filtro, deps, todos = false) {
+    const junto = [];
     for (const dep of deps) {
       const gs = grupos().filter((g) => g.departamento === dep && filtro(MAIUSC(g.descricao)));
-      if (gs.length) return gs.slice(0, 4);
+      if (gs.length && !todos) return gs.slice(0, 4);
+      junto.push(...gs);
     }
-    return [];
+    return junto.slice(0, 4);
   }
 
   /** { lv, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
@@ -1086,8 +1089,8 @@
       const op = /\bINST/.test(t) ? "INSTALAR" : /\bRET(IRAR|\.)/.test(t) ? "RETIRAR"
         : l.cor === "vermelho" ? "INSTALAR" : l.riscada ? "RETIRAR" : "";
       const antes = lista.length;
-      const por = (rotulo, qtd, filtro) => {
-        const cands = candidatos(filtro, deps);
+      const por = (rotulo, qtd, filtro, ordem = deps, todos = false) => {
+        const cands = candidatos(filtro, ordem, todos);
         if (cands.length) lista.push({ rotulo, qtd, op, texto: l.texto, cands });
         else outros.push(rotulo);
       };
@@ -1097,17 +1100,26 @@
         const alto = Number(mp[1]) > 13;
         por(`Poste ${mp[1]}/${mp[2]}`, "1", (d) => /^POSTE DE CONCRETO/.test(d) && d.includes(alto ? "> 13M" : "<= 13M"));
       }
-      // estruturas: 1-B4, 2-CE4
+      // 2-100A-0,5H: chave fusível (2 = quantidade, 100 A, elo 0,5H)
+      const fus = /\b(\d{1,2})\s?-\s?(\d{2,3})\s?A\s?-\s?(\d+(?:[,.]\d+)?)\s?([HKT])\b/.exec(t);
+      if (fus) por(`Chave fusível ${fus[2]} A - ${fus[3]}${fus[4]}`, fus[1], (d) => /^CHAVE FUSIVEL <=/.test(d));
+      // estruturas: 1-B4, 2-CE4; cruzeta limpa: 1-2B (2N/2M/2B), 1-1B
       for (const m of t.matchAll(/\b(\d{1,2})\s?-\s?([A-Z0-9]{2,4})\b/g)) {
+        const cruzeta = /^([12])([NMB])E?$/.exec(m[2]);
+        if (cruzeta) {
+          // a de concreto LM (64201 para 2B) primeiro, a LV logo abaixo
+          por(`Cruzeta limpa ${m[2]}`, m[1], (d) => /^CRUZETA LIMPA CONCRETO/.test(d) && d.split(/[\s/]+/).includes(m[2]), [LM, LV], true);
+          continue;
+        }
         const cod = codigoEstrutura(m[2]);
         if (cod) por(`Estrutura ${cod}`, m[1], (d) => /^ESTRUTURA/.test(d) && d.split(/[\s/]+/).includes(cod));
         else if (/[A-Z]/.test(m[2]) && !/^\d+A$/.test(m[2])) outros.push(`${m[1]}-${m[2]}`);
       }
-      // 9CF - 400 A: chaves (faca ou fusível, por fase)
+      // 9CF - 400 A: chave faca (por fase)
       const cf = /\b([0-9O]{0,2})\s?CF\b/.exec(t);
-      if (cf) por(`Chave (CF)${/400\s?A/.test(t) ? " 400 A" : ""}`, /^\d+$/.test(cf[1]) ? cf[1] : "", (d) => /^CHAVE (FACA|FUSIVEL <=)/.test(d));
+      if (cf) por(`Chave faca${/400\s?A/.test(t) ? " 400 A" : ""}`, /^\d+$/.test(cf[1]) ? cf[1] : "", (d) => /^CHAVE FACA/.test(d));
       for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
-      if (lista.length === antes && !mp && !cf) outros.push(l.texto);
+      if (lista.length === antes && !mp && !cf && !fus) outros.push(l.texto);
     }
     return { lv, lista, outros: [...new Set(outros)] };
   }

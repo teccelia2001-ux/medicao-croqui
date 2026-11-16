@@ -20,7 +20,8 @@ app **Medição de Campo** (mesmo login, catálogo, fotos, Excel e PDF).
    **No projeto**: no ponto, o app lê (OCR) o que o projeto escreve naquele poste e
    sugere os serviços do catálogo. Vermelho (caixas) = instalar; cinza riscado =
    retirar; "LINHA VIVA" puxa os códigos LV. Entende poste (`DT12/1000`), estruturas
-   (`1-B4`, `3-CE4`), chaves (`9CF`) e palavras (religador, defensa, trafo...). A pilha
+   (`1-B4`, `3-CE4`), cruzeta limpa (`1-2B` → 64201), chave faca (`9CF - 400 A`), chave
+   fusível (`2-100A-0,5H`: 2 = quantidade) e palavras (religador, defensa, trafo...). A pilha
    de textos é do poste cujo rótulo (F.P2) fica na mesma linha, logo à direita dela.
    Tocar na sugestão abre o serviço com a quantidade e o tipo já marcados; o supervisor
    confere e lança (o projeto é o planejado, a medição é o feito).
