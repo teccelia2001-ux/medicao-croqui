@@ -10,9 +10,13 @@ app **Medição de Campo** (mesmo login, catálogo, fotos, Excel e PDF).
    da obra (ex.: `0032503206.pdf`), o número já vem preenchido.
 2. **Croqui**: o projeto abre em tela cheia. Dois dedos aproximam, um dedo arrasta,
    toque duplo aproxima (no computador: rodinha do mouse e arrastar).
-3. **Toque no poste** → "Novo ponto aqui" (sugere P1, P2...) → **Criar e lançar
-   serviços** abre o ponto: serviços (botões rápidos ou busca), fotos e observação,
-   igual à Medição de Campo. "Concluir ponto" volta ao croqui no mesmo zoom.
+3. **Toque no poste** (ou no nome dele no projeto, ex.: `F.P1`) → "Novo ponto aqui".
+   O app lê o nome do poste escrito no projeto em volta do toque (OCR, Tesseract.js
+   5.1.1 pelo jsDelivr, ~7 MB baixados uma vez e guardados pelo `sw.js`) e já preenche
+   `P1`; se não achar, sugere o próximo (P1, P2...). Se o P1 já existe, oferece abrir
+   ele ou, se está fora do croqui, marcá-lo ali. **Criar e lançar serviços** abre o
+   ponto: serviços (botões rápidos ou busca), fotos e observação, igual à Medição de
+   Campo. "Concluir ponto" volta ao croqui no mesmo zoom.
 4. **Toque num ponto marcado** → embaixo (ou ao lado, com o celular deitado) aparece
    o que foi feito nele: serviços com quantidade, valor e fotos, sem sair do croqui.
    Dali: **Lançar serviços e fotos** ou **Mudar lugar**.

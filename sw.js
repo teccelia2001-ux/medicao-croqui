@@ -4,6 +4,8 @@ importScripts("versao.js");
 // prefixo próprio: o github.io é um endereço só para todos os apps, e os caches são divididos
 const PREFIXO = "croqui-v";
 const VERSAO = PREFIXO + self.VERSAO_APP.numero;
+// leitor do nome do poste (Tesseract, ~7 MB): guardado no 1º uso, fora das versões do app
+const CACHE_OCR = "croqui-ocr-5.1.1";
 const ARQUIVOS = [
   "./",
   "versao.js",
@@ -52,6 +54,12 @@ self.addEventListener("fetch", (e) => {
   // o banco (Supabase) passa direto, nunca vai para o cache
   if (url.origin !== location.origin) {
     if (url.hostname === "cdnjs.cloudflare.com") e.respondWith(caches.match(req).then((r) => r || fetch(req)));
+    if (url.hostname === "cdn.jsdelivr.net") {
+      e.respondWith(caches.open(CACHE_OCR).then((c) => c.match(req).then((r) => r || fetch(req).then((resp) => {
+        if (resp.ok) c.put(req, resp.clone());
+        return resp;
+      }))));
+    }
     return;
   }
   // no-cache: o GitHub Pages manda max-age=600 e o navegador devolveria o arquivo velho

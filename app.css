@@ -928,3 +928,8 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .projeto-atual b { word-break: break-all; }
 .sem-projeto { display: flex; flex-direction: column; gap: 8px; border-style: dashed; }
 .no-croqui { padding-top: 8px; border-top: 1px solid var(--borda); }
+
+/* ponto novo: nome lido no projeto e ponto que já existe com esse nome */
+.cq-existe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: #fff7ed; font-size: 14px; }
+.cq-existe span { flex: 1 1 160px; }
+.cq-existe .botao { width: auto; min-height: 38px; padding: 6px 12px; }

@@ -755,11 +755,17 @@
   function folhaNovoCroqui() {
     const n = estado.cqNovo;
     const soltos = M.pontosReais(estado.obra.pontos).filter((p) => !p.croqui).sort(cmpPonto);
+    const nome = (n.nome || "").trim().toUpperCase();
+    const jaExiste = !n.editado && nome && M.pontosReais(estado.obra.pontos).find((p) => p.nome.trim().toUpperCase() === nome);
     return `<div class="cq-folha" role="dialog" aria-label="Novo ponto">
       <div class="cq-folha-topo"><b>Novo ponto aqui</b><button type="button" class="remover" data-acao="cq-cancelar" aria-label="Cancelar">×</button></div>
       <label class="campo">Nome do ponto
         <input id="cq-nome" value="${esc(n.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off" maxlength="30">
       </label>
+      ${avisoLido(n)}
+      ${jaExiste ? `<div class="cq-existe">${jaExiste.croqui
+        ? `<span>O <b>${esc(jaExiste.nome)}</b> já está marcado no croqui.</span><button type="button" class="botao botao-claro" data-acao="cq-ver" data-id="${jaExiste.id}">Ver o ${esc(jaExiste.nome)}</button>`
+        : `<span>O <b>${esc(jaExiste.nome)}</b> já foi lançado e está fora do croqui.</span><button type="button" class="botao" data-acao="cq-usar" data-id="${jaExiste.id}">Marcar o ${esc(jaExiste.nome)} aqui</button>`}</div>` : ""}
       <div class="dupla">
         <button type="button" class="botao botao-claro" data-acao="cq-cancelar">Cancelar</button>
         <button type="button" class="botao" data-acao="cq-criar">Criar e lançar serviços</button>
@@ -809,6 +815,8 @@
         if (v.paginas > 1) return render(); // aparece a troca de folha
       }
       atualizarMarcas();
+      // deixa o leitor do nome do poste pronto para o primeiro toque
+      if (!soLeitura(o) && navigator.onLine) setTimeout(() => Croqui.prepararLeitura().catch(() => {}), 1500);
       const centrar = pontoPorId(estado.cqCentrar);
       estado.cqCentrar = null;
       if (centrar?.croqui) v.centralizar(centrar.croqui);
@@ -842,9 +850,44 @@
     // com o resumo de um ponto aberto, o primeiro toque fora só fecha o resumo
     if (estado.cqSel) { estado.cqSel = null; return render(); }
     if (soLeitura(o)) return;
-    estado.cqNovo = { pag: estado.cqPag, x: arred(pos.x), y: arred(pos.y), nome: estado.cqNovo?.nome || proximoNome(o) };
+    const antes = estado.cqNovo;
+    const n = { pag: estado.cqPag, x: arred(pos.x), y: arred(pos.y), nome: antes?.editado ? antes.nome : proximoNome(o), editado: !!antes?.editado };
+    estado.cqNovo = n;
     estado.cqRevelar = true;
+    if (o.projeto) n.lendo = true;
     render();
+    if (o.projeto) lerNomePoste(n);
+  }
+
+  /** Lê no projeto o nome do poste em volta do toque (F.P1 → P1) e põe no ponto novo,
+   *  se o supervisor ainda não digitou outro. */
+  async function lerNomePoste(n) {
+    const o = estado.obra;
+    let achou = null;
+    try {
+      const proj = await garantirProjeto(o);
+      if (proj) achou = await Croqui.lerPoste(proj, n);
+    } catch (e) {
+      console.warn("leitura do nome do poste:", e);
+    }
+    n.lendo = false;
+    n.lido = achou?.texto || "";
+    if (estado.cqNovo !== n || estado.obra !== o) return;
+    if (achou && !n.editado) n.nome = achou.nome;
+    // digitando: não refaz a tela (o teclado fecharia), só troca o aviso
+    if (n.editado) {
+      const aviso = document.getElementById("cq-lido");
+      if (aviso) aviso.outerHTML = avisoLido(n);
+      return;
+    }
+    render();
+  }
+
+  function avisoLido(n) {
+    const t = n.lendo ? "🔎 Lendo o nome do poste no projeto…"
+      : n.lido ? `Lido no projeto: <b>${esc(n.lido)}</b>`
+        : n.lido === "" ? "Não achei o nome do poste aqui. Toque em cima do nome dele (ex.: F.P1) ou digite." : "";
+    return `<small class="sub cq-lido" id="cq-lido">${t}</small>`;
   }
 
   function tocouMarca(id) {
@@ -1868,6 +1911,9 @@
         avisar(`${p.nome} marcado no croqui.`);
         return render();
       }
+      case "cq-ver": // o nome lido no projeto já é de um ponto marcado: abre ele
+        Object.assign(estado, { cqNovo: null, cqSel: alvo.dataset.id, cqCentrar: alvo.dataset.id, cqRevelar: true });
+        return render();
       case "cq-mover":
         Object.assign(estado, { cqMover: alvo.dataset.id, cqSel: null, cqNovo: null });
         return render();
@@ -2101,7 +2147,7 @@
       salvarDepois();
       return atualizarValoresPonto();
     }
-    if (t.id === "cq-nome" && estado.cqNovo) { estado.cqNovo.nome = t.value.toUpperCase().slice(0, 30); return; }
+    if (t.id === "cq-nome" && estado.cqNovo) { Object.assign(estado.cqNovo, { nome: t.value.toUpperCase().slice(0, 30), editado: true }); return; }
     if (p && t.id === "p-nome") { p.nome = t.value.toUpperCase().slice(0, 30); salvarDepois(); return; }
     if (p && t.id === "p-obs") { p.obs = t.value; salvarDepois(); return; }
   });

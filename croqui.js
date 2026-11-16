@@ -487,7 +487,7 @@
   /** Imagem (JPEG) da folha ou de um pedaço dela, com os pontos marcados.
    *  `recorte`: { x, y } fração da folha no centro, `largura` fração da largura da folha
    *  e `proporcao` largura/altura do pedaço. `marcas`: [{ nome, x, y, cor, destaque }]. */
-  async function imagem(proj, { pag = 1, marcas = [], recorte = null, px = 2400 } = {}) {
+  async function imagem(proj, { pag = 1, marcas = [], recorte = null, px = 2400, canvas = false } = {}) {
     const doc = await abrir(proj);
     const f = await folha(doc, Math.min(Math.max(1, pag), doc.paginas));
     let escala, dx = 0, dy = 0, w, h;
@@ -513,6 +513,7 @@
     for (const m of [...marcas].sort((a, b) => (a.destaque ? 1 : 0) - (b.destaque ? 1 : 0))) {
       desenharMarca(ctx, m.x * f.W * escala - dx, m.y * f.H * escala - dy, m.nome, m.cor, m.destaque ? r * 1.25 : r);
     }
+    if (canvas) return { cv, w, h };
     return { url: cv.toDataURL("image/jpeg", 0.85), w, h };
   }
 
@@ -554,5 +555,87 @@
     return { geral, porPonto };
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, COR_COM, COR_SEM };
+  // ------------------------------------------------------------------ nome do poste (OCR)
+  // O projeto impresso pelo "Microsoft Print to PDF" não tem texto: o nome do poste
+  // (F.P1, P12...) é só desenho. O Tesseract lê um pedaço da folha em volta do toque.
+  // Baixa uma vez (uns 7 MB, guardados pelo sw.js); sem ele, o nome fica o sugerido.
+  const TESSERACT = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+  let leitor = null;
+  function prepararLeitura() {
+    if (!leitor) {
+      leitor = (async () => {
+        if (!window.Tesseract) {
+          await new Promise((ok, falha) => {
+            const s = document.createElement("script");
+            s.src = TESSERACT;
+            s.onload = ok;
+            s.onerror = () => falha(new Error("Não deu para carregar o leitor de texto."));
+            document.head.appendChild(s);
+          });
+        }
+        // o sw.js já guarda o idioma: não precisa de outra cópia no banco do aparelho
+        const w = await window.Tesseract.createWorker("eng", 1, { cacheMethod: "none" });
+        await w.setParameters({ tessedit_pageseg_mode: "11" }); // palavras soltas pelo desenho
+        return w;
+      })().catch((e) => {
+        leitor = null;
+        throw e;
+      });
+    }
+    return leitor;
+  }
+
+  // "F.P1", "P.12", "P7" → número do poste (o OCR às vezes troca 1 por l/I e 0 por O
+  // e às vezes perde o ponto: "FP3")
+  const ROTULO_POSTE = /^(?:[A-Z]{1,3}\.?)?P\.?([0-9LIO]{1,4})$/;
+
+  /** Preto no branco: o rótulo é azul/vermelho/verde; o OCR lê bem melhor sem cor. */
+  function pretoBranco(cv) {
+    const ctx = cv.getContext("2d");
+    const d = ctx.getImageData(0, 0, cv.width, cv.height);
+    const p = d.data;
+    for (let i = 0; i < p.length; i += 4) {
+      const v = Math.min(p[i], p[i + 1], p[i + 2]) < 170 ? 0 : 255;
+      p[i] = p[i + 1] = p[i + 2] = v;
+    }
+    ctx.putImageData(d, 0, 0);
+    return cv;
+  }
+
+  /** Nome do poste escrito no projeto mais perto de `pos` ({ pag, x, y } em fração da
+   *  folha): { nome: "P1", texto: "F.P1" } ou null. */
+  async function lerPoste(proj, pos) {
+    // 2ª tentativa em outro tamanho: o OCR às vezes perde um número num deles
+    for (const px of [840, 1050]) {
+      const achou = await lerPosteEm(proj, pos, px);
+      if (achou) return achou;
+    }
+    return null;
+  }
+  async function lerPosteEm(proj, pos, px) {
+    const w = await prepararLeitura();
+    const im = await imagem(proj, { pag: pos.pag || 1, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.12, proporcao: 2 } });
+    const { data } = await w.recognize(pretoBranco(im.cv), {}, { blocks: true });
+    let melhor = null;
+    for (const b of data.blocks || []) {
+      for (const par of b.paragraphs) {
+        for (const linha of par.lines) {
+          for (const pal of linha.words) {
+            // "(P1)" das notas do projeto não é o nome do poste: só a palavra sozinha vale
+            const texto = pal.text.trim().toUpperCase().replace(/[,;:|]+$/, "");
+            const m = ROTULO_POSTE.exec(texto);
+            if (!m || pal.confidence < 25) continue;
+            const num = m[1].replace(/[LI]/g, "1").replace(/O/g, "0");
+            const { x0, x1, y0, y1 } = pal.bbox;
+            // o rótulo com prefixo (F.P1) ganha de um "P1" solto perto do toque
+            const d = Math.hypot((x0 + x1) / 2 - im.w / 2, (y0 + y1) / 2 - im.h / 2) + (texto.startsWith("P") ? im.w / 4 : 0);
+            if (!melhor || d < melhor.d) melhor = { nome: "P" + num, texto, d };
+          }
+        }
+      }
+    }
+    return melhor && { nome: melhor.nome, texto: melhor.texto };
+  }
+
+  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, lerPoste, COR_COM, COR_SEM };
 })();
