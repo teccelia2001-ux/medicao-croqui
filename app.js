@@ -1050,7 +1050,8 @@
   function codigoEstrutura(bruto) {
     const conhecidos = estruturas();
     const s = bruto.replace(/^5/, "S");
-    const tentativas = [bruto, s, s.replace(/L/g, "I"), s.replace(/^S1/, "SI"), s.replace(/H/g, "I1"), s.replace(/0/g, "O")];
+    const tentativas = [bruto, s, s.replace(/L/g, "I"), s.replace(/^S1/, "SI"), s.replace(/H/g, "I1"), s.replace(/0/g, "O"),
+      s.replace(/Z$/, "2"), s.replace(/^CC/, "CE"), s.replace(/^S(\d)$/, "SI$1")]; // "RAZ" → RA2, "CC4" → CE4
     return tentativas.find((t) => conhecidos.has(t)) || null;
   }
 
@@ -1094,14 +1095,15 @@
         if (cands.length) lista.push({ rotulo, qtd, op, texto: l.texto, cands });
         else outros.push(rotulo);
       };
-      // poste: DT12/1000 (o OCR às vezes perde o D, põe espaço ou lê a barra como 1: "DT1211000")
-      const mp = /\bD?T\s?(\d{1,2})\s?[/1IL|]\s?(\d{3,4})\b/.exec(t);
+      // poste: DT12/1000 = altura 12 m / 1000 daN (o OCR às vezes perde o D, põe espaço, lê a
+      // barra como 1, "DT1211000", ou gruda a borda da caixa na frente, "IDT11/600")
+      const mp = /(?:^|[^A-Z0-9]|[IL|[])D?T\s?(\d{1,2})\s?[/1IL|]\s?(\d{3,4})\b/.exec(t);
       if (mp) {
         const alto = Number(mp[1]) > 13;
         por(`Poste ${mp[1]}/${mp[2]}`, "1", (d) => /^POSTE DE CONCRETO/.test(d) && d.includes(alto ? "> 13M" : "<= 13M"));
       }
       // 2-100A-0,5H: chave fusível (2 = quantidade, 100 A, elo 0,5H)
-      const fus = /\b(\d{1,2})\s?-\s?(\d{2,3})\s?A\s?-\s?(\d+(?:[,.]\d+)?)\s?([HKT])\b/.exec(t);
+      const fus = /\b(\d{1,2})\s?-\s?(\d{2,3})\s?A\s?[-:]?\s?(\d+(?:[,.]\d+)?)\s?([HKT])\b/.exec(t); // (o OCR troca o traço por ":")
       if (fus) por(`Chave fusível ${fus[2]} A - ${fus[3]}${fus[4]}`, fus[1], (d) => /^CHAVE FUSIVEL <=/.test(d));
       // estruturas: 1-B4, 2-CE4; cruzeta limpa: 1-2B (2N/2M/2B), 1-1B
       for (const m of t.matchAll(/\b(\d{1,2})\s?-\s?([A-Z0-9]{2,4})\b/g)) {
@@ -1116,7 +1118,8 @@
         else if (/[A-Z]/.test(m[2]) && !/^\d+A$/.test(m[2])) outros.push(`${m[1]}-${m[2]}`);
       }
       // 9CF - 400 A: chave faca (por fase)
-      const cf = /\b([0-9O]{0,2})\s?CF\b/.exec(t);
+      // (o número às vezes sai como letra, "SCF": aí fica sem quantidade, para digitar)
+      const cf = /(?:^|[^A-Z0-9])([0-9OS]{0,2})\s?CF\b/.exec(t);
       if (cf) por(`Chave faca${/400\s?A/.test(t) ? " 400 A" : ""}`, /^\d+$/.test(cf[1]) ? cf[1] : "", (d) => /^CHAVE FACA/.test(d));
       for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
       if (lista.length === antes && !mp && !cf && !fus) outros.push(l.texto);
