@@ -604,13 +604,23 @@
 
   /** Nome do poste escrito no projeto mais perto de `pos` ({ pag, x, y } em fração da
    *  folha): { nome: "P1", texto: "F.P1" } ou null. */
-  async function lerPoste(proj, pos) {
-    // 2ª tentativa em outro tamanho: o OCR às vezes perde um número num deles
-    for (const px of [840, 1050]) {
-      const achou = await lerPosteEm(proj, pos, px);
-      if (achou) return achou;
-    }
-    return null;
+  function lerPoste(proj, pos) {
+    return naFila(async () => {
+      // 2ª tentativa em outro tamanho: o OCR às vezes perde um número num deles
+      for (const px of [840, 1050]) {
+        const achou = await lerPosteEm(proj, pos, px);
+        if (achou) return achou;
+      }
+      return null;
+    });
+  }
+
+  // uma leitura de cada vez: a releitura da quantidade muda o modo do leitor por um instante
+  let filaOcr = Promise.resolve();
+  function naFila(fn) {
+    const vez = filaOcr.then(fn, fn);
+    filaOcr = vez.catch(() => {});
+    return vez;
   }
   async function lerPosteEm(proj, pos, px) {
     const w = await prepararLeitura();
@@ -735,13 +745,58 @@
 
   /** O que o projeto escreve no poste mais perto de `pos`:
    *  { poste: "F.P2", apelido: "(P1)", linhas: [{ texto, cor, riscada }] } ou null. */
-  async function lerProjeto(proj, pos) {
+  function lerProjeto(proj, pos) {
+    return naFila(() => lerProjetoAgora(proj, pos));
+  }
+
+  /** Quantidade antes de "CF" (9CF = 9 chaves faca) que o OCR leu como letra ("OCF"):
+   *  relê só aquela caixa, aceitando só números, C, F e traço. */
+  async function relerQuantidade(w, cv, b) {
+    const pad = Math.round((b.y1 - b.y0) * 0.3);
+    const x0 = Math.max(0, b.x0 - pad), y0 = Math.max(0, b.y0 - pad);
+    const W = Math.min(cv.width, b.x1 + pad) - x0, H = Math.min(cv.height, b.y1 + pad) - y0;
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(cv, x0, y0, W, H, 0, 0, W, H);
+    // tira a borda da caixa (reta em pé mais alta que as letras): viraria "1" na frente do 9
+    const d = ctx.getImageData(0, 0, W, H), p = d.data, alta = (b.y1 - b.y0) * 0.85;
+    for (let x = 0; x < W; x++) {
+      let ini = -1;
+      for (let y = 0; y <= H; y++) {
+        const on = y < H && p[(y * W + x) * 4] < 128;
+        if (on && ini < 0) ini = y;
+        if (!on && ini >= 0) {
+          if (y - ini >= alta) for (let z = ini; z < y; z++) { const i = (z * W + x) * 4; p[i] = p[i + 1] = p[i + 2] = 255; }
+          ini = -1;
+        }
+      }
+    }
+    ctx.putImageData(d, 0, 0);
+    await w.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789CF-" });
+    try {
+      const { data } = await w.recognize(c);
+      const m = /(\d{1,2})C?F/.exec(data.text.replace(/\s+/g, ""));
+      return m ? m[1] : "";
+    } finally {
+      await w.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
+    }
+  }
+
+  async function lerProjetoAgora(proj, pos) {
     const w = await prepararLeitura();
     const im = await imagem(proj, { pag: pos.pag || 1, px: 2100, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.3, proporcao: 1.4 } });
     const tudo = mascara(im.cv);
     const verm = mascara(im.cv, "vermelho"); // o vermelho sozinho sai mais limpo
     const linhasTudo = await linhasDe(w, tudo.cv);
     const linhasVerm = await linhasDe(w, verm.cv);
+    for (const l of linhasVerm) {
+      const k = l.palavras.findIndex((p) => /CF/.test(p.texto));
+      if (k < 0 || /^\d{1,2}CF/.test(l.palavras[k].texto) || (k > 0 && /^\d{1,2}$/.test(l.palavras[k - 1].texto))) continue;
+      const n = await relerQuantidade(w, verm.cv, l.bbox);
+      if (n) l.palavras[k] = { ...l.palavras[k], texto: l.palavras[k].texto.replace(/^[^C]*CF/, `${n}CF`) };
+    }
 
     // rótulos dos postes (e o "(P1)" verde do lado, que as notas usam)
     const rotulos = [];
