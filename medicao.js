@@ -112,7 +112,7 @@
   function categoria(desc) {
     const d = (desc || "").toUpperCase();
     if (tem(d, ["PODA", "LIMPEZA", "FAIXA", "CORTE DE", "ARVORE", "ÁRVORE", "ROCO", "ROÇ"])) return "PODA/LIMPEZA FAIXA";
-    if (/RAMAS?/.test(d)) return "PODA/LIMPEZA FAIXA";
+    if (/\bRAMAS?\b/.test(d)) return "PODA/LIMPEZA FAIXA"; // "rama" de árvore; RAMAL não é poda
     if (d.includes("POSTE") || d.includes("CAVA")) return "POSTES";
     if (d.includes("ESTRUTURA")) {
       if (d.includes("SDBT") || d.includes("RAMAL")) return "ESTRUTURA BT";
@@ -694,7 +694,7 @@
 
   window.Medicao = {
     SERVICOS: [], POR_ID: new Map(), DEPARTAMENTOS: [], OPERACOES, usarCatalogo, valorUS, anoUS, numero, valorItem, soma,
-    fmtMoeda, fmtNum, fmtQtd, fmtDia, fmtHora, utm, fmtUtm, totaisPonto, totaisObra, ordenarPontos, pontosReais, estrutura, categoria,
+    fmtMoeda, fmtNum, fmtQtd, fmtDia, fmtHora, utm, fmtUtm, totaisPonto, totaisObra, ordenarPontos, pontosReais, estrutura, categoria, ORDEM_CATEGORIAS,
     gerarExcel, gerarPdf, blobParaDataUrl, catalogoGeradoEm: null,
   };
 })();

@@ -726,7 +726,7 @@
       const itens = p.itens.filter((i) => i.operacao === op);
       if (!itens.length) return "";
       return `<div class="cq-secao"><small class="secao secao-${op.toLowerCase()}"><span>${SECAO[op]}</span><span>${M.fmtMoeda(M.soma(itens, M.valorItem))}</span></small>
-        ${itens.map((i) => `<div class="cq-item"><span title="${esc(i.descricao)}">${esc(nomeNaTela(i))} <small>${esc(i.codigo)}</small></span><b>${M.fmtQtd(i.quantidade)}</b></div>`).join("")}</div>`;
+        ${porCategoria(itens, (i) => `<div class="cq-item"><span title="${esc(i.descricao)}">${esc(nomeNaTela(i))} <small>${esc(i.codigo)}</small></span><b>${M.fmtQtd(i.quantidade)}</b></div>`)}</div>`;
     }).join("");
     const fotos = p.fotos.map((id, k) => {
       const url = estado.miniaturas.get(id);
@@ -1187,6 +1187,19 @@
     </section>`;
   }
 
+  /** Lançados nos grupos e na ordem da planilha de fechamento (POSTES, ESTRUTURA CRUZETAS...,
+   *  CONEXÕES...): cada grupo com o nome bem pequeno e uma linha fina em cima. */
+  function porCategoria(itens, linha) {
+    const grupos = new Map();
+    for (const i of itens) {
+      const c = M.categoria(i.descricao);
+      if (!grupos.has(c)) grupos.set(c, []);
+      grupos.get(c).push(i);
+    }
+    return M.ORDEM_CATEGORIAS.filter((c) => grupos.has(c))
+      .map((c) => `<div class="cat-divisa"><span>${esc(c)}</span></div>${grupos.get(c).map(linha).join("")}`).join("");
+  }
+
   function telaPonto() {
     const o = estado.obra;
     const p = ponto();
@@ -1204,12 +1217,12 @@
       if (!itens.length) return "";
       return `<section class="bloco">
         <h2 class="secao secao-${op.toLowerCase()}"><span>${SECAO[op]} · ${itens.length < todos.length ? `${itens.length} de ${todos.length}` : todos.length}</span><span>${M.fmtMoeda(M.soma(todos, M.valorItem))}</span></h2>
-        ${itens.map((i) => `<div class="cartao item item-linha">
+        ${porCategoria(itens, (i) => `<div class="cartao item item-linha">
           <div class="item-nome" title="${esc(i.descricao)}"><b>${esc(nomeNaTela(i))}</b><small>${esc(i.codigo)}</small></div>
           ${campoQtd(i.quantidade, `data-qtd-item="${i.sid}" aria-label="Quantidade de ${esc(nomeNaTela(i))}"`)}
           <b class="item-valor" id="valor-${i.sid}">${M.fmtMoeda(M.valorItem(i))}</b>
           <button type="button" class="remover" data-acao="remover-item" data-sid="${i.sid}" aria-label="Remover">×</button>
-        </div>`).join("")}
+        </div>`)}
       </section>`;
     }).join("");
 
