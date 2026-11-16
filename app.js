@@ -1077,14 +1077,17 @@
     return junto.slice(0, 4);
   }
 
-  /** { lv, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
+  /** { lv, operativo, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
   function sugestoesDoProjeto(lido) {
     const lv = lido.linhas.some((l) => /LINHA\s*VIVA/.test(MAIUSC(l.texto)));
     const deps = lv ? [LV, LM] : [LM, LV];
     const lista = [], outros = [];
+    let operativo = "";
     for (const l of lido.linhas) {
       const t = MAIUSC(l.texto);
       if (/LINHA\s*VIVA/.test(t)) continue;
+      // número sozinho no alto da pilha (118106): número operativo do equipamento
+      if (/^\d{5,7}$/.test(t.trim())) { operativo = operativo || t.trim(); continue; }
       // vermelho entra; cinza riscado sai; nota (cinza sem risco) diz pelo verbo
       const op = /\bINST/.test(t) ? "INSTALAR" : /\bRET(IRAR|\.)/.test(t) ? "RETIRAR"
         : l.cor === "vermelho" ? "INSTALAR" : l.riscada ? "RETIRAR" : "";
@@ -1121,7 +1124,7 @@
       for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
       if (lista.length === antes && !mp && !cf && !fus) outros.push(l.texto);
     }
-    return { lv, lista, outros: [...new Set(outros)] };
+    return { lv, operativo, lista, outros: [...new Set(outros)] };
   }
 
   // leitura feita uma vez por lugar do ponto (enquanto o app está aberto)
@@ -1156,7 +1159,7 @@
     if (r.lendo) return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">🔎 Lendo o que o projeto pede neste poste…</small></section>`;
     if (r.erro) return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">Não deu para ler o projeto agora${navigator.onLine ? "" : " (o leitor precisa de internet na 1ª vez)"}.</small></section>`;
     const s = r.lido ? sugestoesDoProjeto(r.lido) : { lista: [], outros: [] };
-    if (!s.lista.length && !s.outros.length) {
+    if (!s.lista.length && !s.outros.length && !s.operativo) {
       return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">${r.lido ? "O projeto não escreve serviço neste poste." : "Não achei o nome do poste no projeto perto deste ponto."}</small></section>`;
     }
     const lancado = (g, op) => p.itens.some((i) => i.codigo === g.codigo && i.departamento === g.departamento && (!op || i.operacao === op));
@@ -1170,6 +1173,7 @@
       </div>`).join("");
     return `<section class="cartao do-projeto" id="do-projeto">
       ${topo(s.lv ? `<i class="sigla sigla-lv">LINHA VIVA</i>` : "")}
+      ${s.operativo ? `<div class="sug-operativo">Nº operativo <b>${esc(s.operativo)}</b></div>` : ""}
       ${linhas ? `<small class="sub">Toque no serviço para conferir a quantidade e lançar o que foi feito.</small>${linhas}` : ""}
       ${s.outros.length ? `<small class="sub sug-outros">Também escrito no projeto: ${s.outros.map(esc).join(" · ")}</small>` : ""}
     </section>`;
