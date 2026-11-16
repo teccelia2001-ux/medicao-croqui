@@ -1028,6 +1028,141 @@
     </div>`).join("");
   }
 
+  // ---------- o que o projeto pede no poste
+  // O croqui.js lê (OCR) os textos do poste; aqui viram sugestões do catálogo. O supervisor
+  // confere e lança: o projeto é o planejado, a medição é o que foi feito.
+  const MAIUSC = (t) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  const LM = "C&M (LM)", LV = "C&M (LV)";
+
+  // códigos de estrutura que existem no catálogo (B4, CE4, SI1...): conferem o que o OCR leu
+  let codigosEstrutura = null;
+  function estruturas() {
+    if (!codigosEstrutura) {
+      codigosEstrutura = new Set();
+      M.SERVICOS.forEach((s) => {
+        if (/^ESTRUTURA/.test(MAIUSC(s.descricao))) MAIUSC(s.descricao).split(/[\s/]+/).forEach((t) => /^[A-Z]{1,3}\d[A-Z]?$/.test(t) && codigosEstrutura.add(t));
+      });
+    }
+    return codigosEstrutura;
+  }
+  /** "SL1" → SI1, "511" → SI1, "SH" → SI1 (o OCR troca I por l/1, S por 5 e lê "I1" como H) */
+  function codigoEstrutura(bruto) {
+    const conhecidos = estruturas();
+    const s = bruto.replace(/^5/, "S");
+    const tentativas = [bruto, s, s.replace(/L/g, "I"), s.replace(/^S1/, "SI"), s.replace(/H/g, "I1"), s.replace(/0/g, "O")];
+    return tentativas.find((t) => conhecidos.has(t)) || null;
+  }
+
+  // palavras do projeto → serviço do catálogo
+  const PALAVRAS = [
+    [/\bRELIGADOR\b/, "Religador", (d) => /^RELIGADOR /.test(d)],
+    [/\bDEFENSA\b/, "Defensa", (d) => /^DEFENSA/.test(d)],
+    [/\bCAL[CÇ]ADA\b/, "Calçada", (d) => /CALCADA/.test(d)],
+    [/\b(TRAFO|TRANSFORMADOR)\b/, "Transformador", (d) => /^TRANSFORMADOR DISTRIBUICAO/.test(d)],
+    [/\bPARA-?RAIOS?\b/, "Para-raio", (d) => /^PARA-RAIO/.test(d)],
+    [/\bATERRAMENTO\b/, "Aterramento", (d) => /^ATERRAMENTO/.test(d)],
+    [/\bCRUZETA\b/, "Cruzeta", (d) => /^CRUZETA/.test(d)],
+    [/\bESTAI\b/, "Estai", (d) => /^ESTAI/.test(d)],
+    [/\bCHAVE FUSIVEL\b/, "Chave fusível", (d) => /^CHAVE FUSIVEL <=/.test(d)],
+  ];
+
+  function candidatos(filtro, deps) {
+    for (const dep of deps) {
+      const gs = grupos().filter((g) => g.departamento === dep && filtro(MAIUSC(g.descricao)));
+      if (gs.length) return gs.slice(0, 4);
+    }
+    return [];
+  }
+
+  /** { lv, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
+  function sugestoesDoProjeto(lido) {
+    const lv = lido.linhas.some((l) => /LINHA\s*VIVA/.test(MAIUSC(l.texto)));
+    const deps = lv ? [LV, LM] : [LM, LV];
+    const lista = [], outros = [];
+    for (const l of lido.linhas) {
+      const t = MAIUSC(l.texto);
+      if (/LINHA\s*VIVA/.test(t)) continue;
+      // vermelho entra; cinza riscado sai; nota (cinza sem risco) diz pelo verbo
+      const op = /\bINST/.test(t) ? "INSTALAR" : /\bRET(IRAR|\.)/.test(t) ? "RETIRAR"
+        : l.cor === "vermelho" ? "INSTALAR" : l.riscada ? "RETIRAR" : "";
+      const antes = lista.length;
+      const por = (rotulo, qtd, filtro) => {
+        const cands = candidatos(filtro, deps);
+        if (cands.length) lista.push({ rotulo, qtd, op, texto: l.texto, cands });
+        else outros.push(rotulo);
+      };
+      // poste: DT12/1000 (o OCR às vezes perde o D, põe espaço ou lê a barra como 1: "DT1211000")
+      const mp = /\bD?T\s?(\d{1,2})\s?[/1IL|]\s?(\d{3,4})\b/.exec(t);
+      if (mp) {
+        const alto = Number(mp[1]) > 13;
+        por(`Poste ${mp[1]}/${mp[2]}`, "1", (d) => /^POSTE DE CONCRETO/.test(d) && d.includes(alto ? "> 13M" : "<= 13M"));
+      }
+      // estruturas: 1-B4, 2-CE4
+      for (const m of t.matchAll(/\b(\d{1,2})\s?-\s?([A-Z0-9]{2,4})\b/g)) {
+        const cod = codigoEstrutura(m[2]);
+        if (cod) por(`Estrutura ${cod}`, m[1], (d) => /^ESTRUTURA/.test(d) && d.split(/[\s/]+/).includes(cod));
+        else if (/[A-Z]/.test(m[2]) && !/^\d+A$/.test(m[2])) outros.push(`${m[1]}-${m[2]}`);
+      }
+      // 9CF - 400 A: chaves (faca ou fusível, por fase)
+      const cf = /\b([0-9O]{0,2})\s?CF\b/.exec(t);
+      if (cf) por(`Chave (CF)${/400\s?A/.test(t) ? " 400 A" : ""}`, /^\d+$/.test(cf[1]) ? cf[1] : "", (d) => /^CHAVE (FACA|FUSIVEL <=)/.test(d));
+      for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
+      if (lista.length === antes && !mp && !cf) outros.push(l.texto);
+    }
+    return { lv, lista, outros: [...new Set(outros)] };
+  }
+
+  // leitura feita uma vez por lugar do ponto (enquanto o app está aberto)
+  const lidosProjeto = new Map();
+  const chaveLido = (o, p) => `${o.id}|${o.projeto?.em}|${p.croqui.pag || 1}|${p.croqui.x}|${p.croqui.y}`;
+  function doProjeto(o, p) {
+    const k = chaveLido(o, p);
+    if (!lidosProjeto.has(k)) {
+      lidosProjeto.set(k, { lendo: true });
+      (async () => {
+        let r = { erro: true };
+        try {
+          const proj = await garantirProjeto(o);
+          const lido = proj && await Croqui.lerProjeto(proj, p.croqui);
+          r = { lido };
+        } catch (e) {
+          console.warn("leitura do projeto:", e);
+        }
+        lidosProjeto.set(k, r);
+        // só troca o cartão: refazer a tela fecharia o teclado de quem está digitando
+        const el = document.getElementById("do-projeto");
+        if (el && estado.tela === "ponto" && ponto() === p) el.outerHTML = doProjetoHtml(o, p);
+      })();
+    }
+    return lidosProjeto.get(k);
+  }
+
+  function doProjetoHtml(o, p) {
+    if (p.geral || !p.croqui || !o.projeto || soLeitura(o)) return "";
+    const r = doProjeto(o, p);
+    const topo = (extra = "") => `<div class="linha-topo"><b>📐 No projeto${r.lido?.poste ? ` <small>${esc(r.lido.poste)}${r.lido.apelido ? ` ${esc(r.lido.apelido)}` : ""}</small>` : ""}</b>${extra}</div>`;
+    if (r.lendo) return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">🔎 Lendo o que o projeto pede neste poste…</small></section>`;
+    if (r.erro) return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">Não deu para ler o projeto agora${navigator.onLine ? "" : " (o leitor precisa de internet na 1ª vez)"}.</small></section>`;
+    const s = r.lido ? sugestoesDoProjeto(r.lido) : { lista: [], outros: [] };
+    if (!s.lista.length && !s.outros.length) {
+      return `<section class="cartao do-projeto" id="do-projeto">${topo()}<small class="sub">${r.lido ? "O projeto não escreve serviço neste poste." : "Não achei o nome do poste no projeto perto deste ponto."}</small></section>`;
+    }
+    const lancado = (g, op) => p.itens.some((i) => i.codigo === g.codigo && i.departamento === g.departamento && (!op || i.operacao === op));
+    const linhas = s.lista.map((x) => `<div class="sug">
+        <div class="sug-topo">${x.op ? `<span class="sug-op sug-${x.op.toLowerCase()}">${ROTULO[x.op]}</span>` : ""}<b>${x.qtd ? `${esc(x.qtd)} × ` : ""}${esc(x.rotulo)}</b></div>
+        <div class="sug-cands">${x.cands.map((g) => {
+          const ja = lancado(g, x.op);
+          return `<button type="button" class="sug-cand${ja ? " sug-ja" : ""}" data-acao="sugestao" data-chave="${esc(g.chave)}" data-qtd="${esc(x.qtd)}" data-op="${x.op}">
+            ${ja ? "✓ " : ""}<b>${esc(g.codigo)}</b> ${esc(g.descricao)} <i class="sigla sigla-${esc(sigla(g.departamento).replace("&", "").toLowerCase())}">${esc(sigla(g.departamento))}</i></button>`;
+        }).join("")}</div>
+      </div>`).join("");
+    return `<section class="cartao do-projeto" id="do-projeto">
+      ${topo(s.lv ? `<i class="sigla sigla-lv">LINHA VIVA</i>` : "")}
+      ${linhas ? `<small class="sub">Toque no serviço para conferir a quantidade e lançar o que foi feito.</small>${linhas}` : ""}
+      ${s.outros.length ? `<small class="sub sug-outros">Também escrito no projeto: ${s.outros.map(esc).join(" · ")}</small>` : ""}
+    </section>`;
+  }
+
   function telaPonto() {
     const o = estado.obra;
     const p = ponto();
@@ -1093,6 +1228,8 @@
       </section>
       </fieldset>
 
+      ${doProjetoHtml(o, p)}
+
       <section class="cartao adicionar" ${soLeitura(o) ? "hidden" : ""}>
         <b>Serviços</b>
         <button type="button" class="link link-busca" data-acao="abrir-busca">${estado.buscaAberta ? "Fechar busca" : "🔎 Outro serviço (buscar no catálogo)"}</button>
@@ -1151,7 +1288,7 @@
           ${g.opcoes.map((s) => {
             const ja = p.itens.some((i) => i.sid === s.id);
             const valor = M.valorItem({ quantidade: estado.qtd, us: s.us, valor_us: M.valorUS(s.departamento, ano) });
-            return `<button type="button" class="opcao opcao-${(s.operacao || "").toLowerCase()}" data-acao="adicionar" data-sid="${s.id}" ${ja || !qtdOk ? "disabled" : ""}>
+            return `<button type="button" class="opcao opcao-${(s.operacao || "").toLowerCase()}${g.opSugerida === s.operacao ? " opcao-sugerida" : ""}" data-acao="adicionar" data-sid="${s.id}" ${ja || !qtdOk ? "disabled" : ""}>
               ${ja ? "✓ " : ""}${esc(ROTULO[s.operacao] ?? s.operacao)}<small data-valor-op="${s.id}">${qtdOk ? M.fmtMoeda(valor) : ""}</small></button>`;
           }).join("")}
         </div>
@@ -2008,6 +2145,13 @@
         estado.busca = "";
         return render();
       }
+      case "sugestao": { // serviço que o projeto pede: abre com a quantidade e o tipo do projeto
+        const g = grupos().find((x) => x.chave === alvo.dataset.chave);
+        if (!g) return;
+        estado.escolhido = { ...g, opSugerida: alvo.dataset.op };
+        estado.qtd = alvo.dataset.qtd || "";
+        return render();
+      }
       case "rapido": {
         const g = grupos().find((x) => x.chave === alvo.dataset.chave);
         if (!g) return avisar("Esse código não está no catálogo baixado.", "erro");
@@ -2274,6 +2418,7 @@
     await Banco.gravar("catalogo", cat);
     M.usarCatalogo(cat);
     cacheGrupos.clear();
+    codigosEstrutura = null;
   }
 
   /** Catálogo sempre igual ao do banco, sem botão: confere ao abrir o app, quando o
@@ -2295,6 +2440,7 @@
       await Banco.gravar("catalogo", novo);
       M.usarCatalogo(novo);
       cacheGrupos.clear();
+      codigosEstrutura = null;
       // refaz a tela só se ninguém estiver digitando ou com a janela de quantidade aberta
       if (!estado.escolhido && !document.activeElement?.matches?.("input, textarea")) render();
     } catch (e) { /* tenta na próxima */ }

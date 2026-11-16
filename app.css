@@ -933,3 +933,19 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-existe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: #fff7ed; font-size: 14px; }
 .cq-existe span { flex: 1 1 160px; }
 .cq-existe .botao { width: auto; min-height: 38px; padding: 6px 12px; }
+
+/* o que o projeto pede no poste (lido do croqui) */
+.do-projeto { display: grid; gap: 8px; border: 1px dashed #c2410c; }
+.do-projeto .linha-topo small { font-weight: 600; color: var(--suave); }
+.sug { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid #f1f5f9; }
+.sug-topo { display: flex; align-items: center; gap: 8px; }
+.sug-op { padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 800; }
+.sug-instalar { background: #dcfce7; color: #166534; }
+.sug-retirar { background: #fee2e2; color: #991b1b; }
+.sug-executar { background: #fef3c7; color: #92400e; }
+.sug-cands { display: grid; gap: 6px; }
+.sug-cand { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; text-align: left; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+.sug-cand .sigla { margin-left: auto; }
+.sug-ja { background: #f0fdf4; border-color: #86efac; }
+.sug-outros { line-height: 1.4; }
+.opcao-sugerida { box-shadow: 0 0 0 3px #f97316; }

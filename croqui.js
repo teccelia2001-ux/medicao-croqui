@@ -637,5 +637,182 @@
     return melhor && { nome: melhor.nome, texto: melhor.texto };
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, lerPoste, COR_COM, COR_SEM };
+  // ------------------------------------------------------------------ serviços escritos no projeto
+  // Ao lado de cada poste o projeto escreve o que muda nele: em vermelho (caixas) o que
+  // entra ("INST. RELIGADOR NA", "DT12/1000 1-B4 1-SI1"), em cinza riscado o que sai
+  // ("DT11/600 1-CE4"), em preto o que fica. A pilha de caixas termina na mesma linha do
+  // rótulo do poste (F.P2), à esquerda dele.
+
+  function corPixel(r, g, b) {
+    if (r > g + 60 && r > b + 60) return "vermelho";
+    if (b > r + 60 && b > g + 30) return "azul";
+    if (g > r + 60 && g > b + 30) return "verde";
+    if (Math.max(r, g, b) < 70) return "preto";
+    if (Math.abs(r - g) < 30 && Math.abs(g - b) < 30) return "cinza";
+    return "";
+  }
+
+  /** Tinta em preto no branco para o OCR, sem as retas compridas (borda das caixas e o risco
+   *  do que vai sair: atrapalham a leitura) e com as letras que o risco cortou recompostas.
+   *  `so`: só a tinta dessa cor. */
+  function mascara(cv, so) {
+    const W = cv.width, H = cv.height, L = Math.round(W * 0.03);
+    const orig = cv.getContext("2d").getImageData(0, 0, W, H).data;
+    const m = new Uint8Array(W * H), apag = new Uint8Array(W * H);
+    for (let k = 0, i = 0; k < m.length; k++, i += 4) {
+      const r = orig[i], g = orig[i + 1], b = orig[i + 2];
+      if (Math.min(r, g, b) >= 170) continue;
+      if (so && corPixel(r, g, b) !== so) continue;
+      m[k] = 1;
+    }
+    for (let y = 0; y < H; y++) {
+      let ini = -1;
+      for (let x = 0; x <= W; x++) {
+        const on = x < W && m[y * W + x];
+        if (on && ini < 0) ini = x;
+        if (!on && ini >= 0) {
+          if (x - ini > L) for (let z = ini; z < x; z++) { m[y * W + z] = 0; apag[y * W + z] = 1; }
+          ini = -1;
+        }
+      }
+    }
+    // a haste da letra que o risco cortou: tem tinta logo acima e logo abaixo do risco
+    const volta = [];
+    for (let k = 0; k < m.length; k++) {
+      if (!apag[k]) continue;
+      let cima = false, baixo = false;
+      for (let a = 1, j = k - W; a <= 4 && j >= 0; a++, j -= W) { if (m[j]) { cima = true; break; } if (!apag[j]) break; }
+      for (let a = 1, j = k + W; a <= 4 && j < m.length; a++, j += W) { if (m[j]) { baixo = true; break; } if (!apag[j]) break; }
+      if (cima && baixo) volta.push(k);
+    }
+    for (const k of volta) m[k] = 1;
+    const out = document.createElement("canvas");
+    out.width = W;
+    out.height = H;
+    const ctx = out.getContext("2d");
+    const d = ctx.createImageData(W, H);
+    for (let k = 0, i = 0; k < m.length; k++, i += 4) {
+      const v = m[k] ? 0 : 255;
+      d.data[i] = d.data[i + 1] = d.data[i + 2] = v;
+      d.data[i + 3] = 255;
+    }
+    ctx.putImageData(d, 0, 0);
+    return { cv: out, m, apag, orig, W };
+  }
+
+  /** Cor da linha (a que mais aparece na tinta dela, fora o risco) e se está riscada. */
+  function corDaLinha(mk, b) {
+    const n = { vermelho: 0, cinza: 0, preto: 0, azul: 0, verde: 0 };
+    let maxRisco = 0;
+    const meio0 = b.y0 + (b.y1 - b.y0) * 0.2, meio1 = b.y1 - (b.y1 - b.y0) * 0.2;
+    for (let y = b.y0; y < b.y1; y++) {
+      let risco = 0;
+      for (let x = b.x0; x < b.x1; x++) {
+        const k = y * mk.W + x;
+        if (mk.apag[k]) { risco++; continue; }
+        if (!mk.m[k]) continue;
+        const c = corPixel(mk.orig[k * 4], mk.orig[k * 4 + 1], mk.orig[k * 4 + 2]);
+        if (c) n[c]++;
+      }
+      if (y >= meio0 && y <= meio1) maxRisco = Math.max(maxRisco, risco);
+    }
+    const cor = Object.entries(n).sort((a, c) => c[1] - a[1])[0][0];
+    return { cor, riscada: maxRisco > (b.x1 - b.x0) * 0.4 };
+  }
+
+  async function linhasDe(w, cv) {
+    const { data } = await w.recognize(cv, {}, { blocks: true });
+    const linhas = [];
+    for (const b of data.blocks || []) for (const par of b.paragraphs) for (const l of par.lines) {
+      linhas.push({ bbox: l.bbox, palavras: l.words.map((p) => ({ texto: p.text.trim().toUpperCase(), bbox: p.bbox, conf: p.confidence })) });
+    }
+    return linhas;
+  }
+
+  // só rótulo com prefixo (F.P2, F.P): "P 120" do vão do cabo não é poste
+  const ehRotulo = (t) => /^[A-Z]{1,3}\.?P\.?[0-9LIO]{0,4}$/.test(t) && !t.startsWith("P");
+  const limparLinha = (t) => t.replace(/[[\]|~“”"‘’_]+/g, " ").replace(/\s+/g, " ").trim();
+
+  /** O que o projeto escreve no poste mais perto de `pos`:
+   *  { poste: "F.P2", apelido: "(P1)", linhas: [{ texto, cor, riscada }] } ou null. */
+  async function lerProjeto(proj, pos) {
+    const w = await prepararLeitura();
+    const im = await imagem(proj, { pag: pos.pag || 1, px: 2100, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.3, proporcao: 1.4 } });
+    const tudo = mascara(im.cv);
+    const verm = mascara(im.cv, "vermelho"); // o vermelho sozinho sai mais limpo
+    const linhasTudo = await linhasDe(w, tudo.cv);
+    const linhasVerm = await linhasDe(w, verm.cv);
+
+    // rótulos dos postes (e o "(P1)" verde do lado, que as notas usam)
+    const rotulos = [];
+    for (const l of linhasTudo) {
+      l.palavras.forEach((p, k) => {
+        if (!ehRotulo(p.texto.replace(/[,;:]+$/, ""))) return;
+        const ant = k > 0 ? /^\(?P?(\d{1,3})\)$/.exec(l.palavras[k - 1].texto) : null;
+        rotulos.push({ texto: p.texto, bbox: p.bbox, apelido: ant ? `(P${ant[1]})` : "" });
+      });
+    }
+    if (!rotulos.length) return null;
+    const cx = im.w / 2, cy = im.h / 2;
+    const centro = (b) => [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
+    const nosso = rotulos.reduce((a, r) => {
+      const [x, y] = centro(r.bbox), [ax, ay] = centro(a.bbox);
+      return Math.hypot(x - cx, y - cy) < Math.hypot(ax - cx, ay - cy) ? r : a;
+    });
+
+    // linhas com serviço: vermelhas (do 2º OCR) e cinzas (riscadas = sai; sem risco = nota)
+    const linhas = [];
+    const guardar = (l, cor, riscada) => {
+      const texto = limparLinha(l.palavras.map((p) => p.texto).join(" "));
+      if (!/[A-Z]{3,}|\d+\s?-\s?[A-Z]{1,3}\d|\d{3,}/.test(texto)) return; // risco solto, pedaço de símbolo
+      linhas.push({ texto, cor, riscada, bbox: l.bbox, h: Math.max(8, l.bbox.y1 - l.bbox.y0) });
+    };
+    for (const l of linhasVerm) guardar(l, "vermelho", false);
+    for (const l of linhasTudo) {
+      const { cor, riscada } = corDaLinha(tudo, l.bbox);
+      if (cor === "cinza") guardar(l, cor, riscada);
+    }
+
+    // pilhas: linhas da mesma cor uma embaixo da outra
+    const pilhas = [];
+    for (const l of linhas.sort((a, b) => a.bbox.y0 - b.bbox.y0)) {
+      const p = pilhas.find((q) => {
+        const u = q[q.length - 1];
+        return u.cor === l.cor && l.bbox.y0 - u.bbox.y1 < Math.max(u.h, l.h) * 1.2
+          && Math.min(u.bbox.x1, l.bbox.x1) - Math.max(u.bbox.x0, l.bbox.x0) > -l.h;
+      });
+      if (p) p.push(l); else pilhas.push([l]);
+    }
+
+    const distRet = (a, b) => Math.hypot(Math.max(0, a.x0 - b.x1, b.x0 - a.x1), Math.max(0, a.y0 - b.y1, b.y0 - a.y1));
+    const donoDa = (pilha) => {
+      // nota que começa com "(P1)": é do poste com esse apelido
+      const ap = /^\(P(\d{1,3})\)/.exec(pilha[0].texto);
+      if (ap) return rotulos.find((r) => r.apelido === `(P${ap[1]})`) || null;
+      // a linha que termina logo à esquerda do rótulo, na mesma altura
+      let dono = null, folga = Infinity;
+      for (const l of pilha) {
+        for (const r of rotulos) {
+          const [, ry] = centro(r.bbox), [, ly] = centro(l.bbox);
+          const vao = r.bbox.x0 - l.bbox.x1;
+          if (Math.abs(ry - ly) < l.h * 0.7 && vao > -l.h && vao < l.h * 6 && vao < folga) { dono = r; folga = vao; }
+        }
+      }
+      if (dono) return dono;
+      // senão, o rótulo mais perto (se estiver perto)
+      const caixa = pilha.reduce((b, l) => ({ x0: Math.min(b.x0, l.bbox.x0), y0: Math.min(b.y0, l.bbox.y0), x1: Math.max(b.x1, l.bbox.x1), y1: Math.max(b.y1, l.bbox.y1) }), { ...pilha[0].bbox });
+      let perto = null, dist = pilha[0].h * 3;
+      for (const r of rotulos) { const d = distRet(caixa, r.bbox); if (d < dist) { perto = r; dist = d; } }
+      return perto;
+    };
+
+    const nossas = pilhas.filter((p) => donoDa(p) === nosso)
+      .sort((a, b) => (a[0].cor === "vermelho" ? 0 : 1) - (b[0].cor === "vermelho" ? 0 : 1) || a[0].bbox.y0 - b[0].bbox.y0);
+    return {
+      poste: nosso.texto, apelido: nosso.apelido,
+      linhas: nossas.flat().map(({ texto, cor, riscada }) => ({ texto, cor, riscada })),
+    };
+  }
+
+  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();

@@ -17,6 +17,13 @@ app **Medição de Campo** (mesmo login, catálogo, fotos, Excel e PDF).
    ele ou, se está fora do croqui, marcá-lo ali. **Criar e lançar serviços** abre o
    ponto: serviços (botões rápidos ou busca), fotos e observação, igual à Medição de
    Campo. "Concluir ponto" volta ao croqui no mesmo zoom.
+   **No projeto**: no ponto, o app lê (OCR) o que o projeto escreve naquele poste e
+   sugere os serviços do catálogo. Vermelho (caixas) = instalar; cinza riscado =
+   retirar; "LINHA VIVA" puxa os códigos LV. Entende poste (`DT12/1000`), estruturas
+   (`1-B4`, `3-CE4`), chaves (`9CF`) e palavras (religador, defensa, trafo...). A pilha
+   de textos é do poste cujo rótulo (F.P2) fica na mesma linha, logo à direita dela.
+   Tocar na sugestão abre o serviço com a quantidade e o tipo já marcados; o supervisor
+   confere e lança (o projeto é o planejado, a medição é o feito).
 4. **Toque num ponto marcado** → embaixo (ou ao lado, com o celular deitado) aparece
    o que foi feito nele: serviços com quantidade, valor e fotos, sem sair do croqui.
    Dali: **Lançar serviços e fotos** ou **Mudar lugar**.
