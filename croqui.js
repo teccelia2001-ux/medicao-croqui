@@ -714,29 +714,33 @@
   // (F.P1, P12...) é só desenho. O Tesseract lê um pedaço da folha em volta do toque.
   // Baixa uma vez (uns 7 MB, guardados pelo sw.js); sem ele, o nome fica o sugerido.
   const TESSERACT = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
-  let leitor = null;
-  function prepararLeitura() {
-    if (!leitor) {
-      leitor = (async () => {
+  // dois leitores: as duas passadas da leitura do projeto (tudo e só o vermelho) rodam juntas
+  const leitores = new Map();
+  let carregandoTesseract = null;
+  function prepararLeitura(n = 1) {
+    if (!leitores.has(n)) {
+      leitores.set(n, (async () => {
         if (!window.Tesseract) {
-          await new Promise((ok, falha) => {
+          carregandoTesseract = carregandoTesseract || new Promise((ok, falha) => {
             const s = document.createElement("script");
             s.src = TESSERACT;
             s.onload = ok;
             s.onerror = () => falha(new Error("Não deu para carregar o leitor de texto."));
             document.head.appendChild(s);
           });
+          await carregandoTesseract;
         }
         // o sw.js já guarda o idioma: não precisa de outra cópia no banco do aparelho
         const w = await window.Tesseract.createWorker("eng", 1, { cacheMethod: "none" });
         await w.setParameters({ tessedit_pageseg_mode: "11" }); // palavras soltas pelo desenho
         return w;
       })().catch((e) => {
-        leitor = null;
+        leitores.delete(n);
+        carregandoTesseract = null;
         throw e;
-      });
+      }));
     }
-    return leitor;
+    return leitores.get(n);
   }
 
 
@@ -1028,9 +1032,9 @@
       }
       return total;
     };
-    // de 3 em 3 graus, os mais perto do reto primeiro (empate fica com o mais reto)
+    // de 5 em 5 graus, os mais perto do reto primeiro (empate fica com o mais reto)
     const grossos = [0];
-    for (let a = 3; a < 90; a += 3) grossos.push(a, -a);
+    for (let a = 5; a < 90; a += 5) grossos.push(a, -a);
     grossos.push(90);
     // primeiro pelas caixas vermelhas; sem elas, por todo o desenho
     for (const soVermelho of [true, false]) {
@@ -1040,10 +1044,10 @@
         if (!melhor || v > melhor.v * 1.05) melhor = { ang: a, v };
       }
       if (melhor.v > L * L * 4) {
-        // afina em volta do melhor: meio grau e depois quarto de grau
-        for (const passo of [0.5, 0.25]) {
+        // afina em volta do melhor: de grau em grau, meio grau e quarto de grau
+        for (const [passo, n] of [[1, 3], [0.5, 1], [0.25, 1]]) {
           const ini = melhor.ang;
-          for (let a = ini - passo * 3; a <= ini + passo * 3; a += passo) {
+          for (let a = ini - passo * n; a <= ini + passo * n; a += passo) {
             if (a === ini) continue;
             const v = medir(a, soVermelho);
             if (v > melhor.v) melhor = { ang: a, v };
@@ -1061,7 +1065,7 @@
   function inclinacaoDaFolha(proj, pag) {
     const k = `${chaveDe(proj)}|${pag}`;
     if (!inclinacoesDaFolha.has(k)) {
-      inclinacoesDaFolha.set(k, imagem(proj, { pag, px: 2400, canvas: true }).then((im) => inclinacao(im.cv)).catch(() => 0));
+      inclinacoesDaFolha.set(k, imagem(proj, { pag, px: 1800, canvas: true }).then((im) => inclinacao(im.cv)).catch(() => 0));
     }
     return inclinacoesDaFolha.get(k);
   }
@@ -1110,19 +1114,30 @@
     return c;
   }
 
+  // tempo de cada etapa da leitura (só no teste: window.CROQUI_DEPURAR)
+  const marcarTempo = (etapa, t0) => { if (window.CROQUI_DEPURAR) (window.CROQUI_TEMPOS = window.CROQUI_TEMPOS || []).push(`${etapa} ${Math.round(performance.now() - t0)}ms`); };
+
   async function lerProjetoAgora(proj, pos, nome) {
+    let t0 = performance.now();
     const w = await prepararLeitura();
+    marcarTempo("leitor", t0);
     // recorte quadrado: com o projeto em pé (90°) o texto corre na vertical e precisa da
     // mesma folga para cima e para baixo que teria para os lados
+    t0 = performance.now();
     const im = await imagem(proj, { pag: pos.pag || 1, px: 1700, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.3, proporcao: 1 } });
+    marcarTempo("recorte", t0);
     // texto torto: lê também com o recorte endireitado (girado em volta do meio, que é o
     // ponto tocado). Pode ter caixa reta e torta juntas: fica a leitura que achou mais
     // texto deste poste.
+    t0 = performance.now();
     const angulos = window.CROQUI_ANGULOS || (await angulosDe(proj, pos.pag || 1, im.cv)); // (CROQUI_ANGULOS: só para teste)
+    marcarTempo("inclinação", t0);
     if (window.CROQUI_DEPURAR) window.CROQUI_ANG = angulos;
     let melhor = null;
     for (const a of angulos) {
+      t0 = performance.now();
       const r = await analisar(w, a ? girar(im.cv, a) : im.cv, nome);
+      marcarTempo(`leitura a ${a}°`, t0);
       // vale a leitura com o (P) mais perto do ponto tocado e o texto mais bem lido: de cabeça
       // para baixo o OCR acha "letras", mas com pouca confiança
       // vale pelo que dá para reconhecer do projeto (DT11/1000, 1-CE3, 3-100A, ATERRAMENTO,
@@ -1132,7 +1147,12 @@
       const conf = r?.linhas.length ? r.linhas.reduce((s, l) => s + l.conf, 0) / r.linhas.length : 0;
       if (window.CROQUI_DEPURAR) (window.CROQUI_NOTAS = window.CROQUI_NOTAS || []).push({ a, nota: Math.round(nota), conf: Math.round(conf), dist: r && Math.round(r.distancia), linhas: r && r.linhas.map((l) => `${l.texto} (${Math.round(l.conf)})`) });
       if (!melhor || nota > melhor.nota) melhor = { r, nota };
-      if (r?.linhas.length && r.distancia < im.w * 0.06 && nota >= 30 && conf >= 50) break; // leitura boa e no ponto: basta
+      // leitura que reconhece bastante do projeto, no ponto: basta (não lê nos outros ângulos)
+      if (r?.linhas.length && r.distancia < im.w * 0.1 && nota >= 25) break;
+      // os de cabeça para baixo (+180°) vêm no fim da lista: só se nenhuma leitura prestou
+      if (Math.abs(a) > 90 && melhor.nota >= 12) break;
+      const proximo = angulos[angulos.indexOf(a) + 1];
+      if (proximo !== undefined && Math.abs(proximo) > 90 && melhor.nota >= 12) break;
     }
     if (melhor.r) {
       delete melhor.r.distancia;
@@ -1144,10 +1164,15 @@
   /** lê o recorte (já endireitado) e separa o que é do poste do meio dele */
   async function analisar(w, base, nome = "") {
     const im = { w: base.width, h: base.height };
+    let t0 = performance.now();
     const tudo = mascara(base);
     const verm = mascara(base, "vermelho"); // o vermelho sozinho sai mais limpo
-    const linhasTudo = await linhasDe(w, tudo.cv);
-    const linhasVerm = await linhasDe(w, verm.cv);
+    marcarTempo("  máscaras", t0);
+    // as duas passadas ao mesmo tempo, cada uma num leitor
+    t0 = performance.now();
+    const w2 = await prepararLeitura(2).catch(() => w);
+    const [linhasTudo, linhasVerm] = await Promise.all([linhasDe(w, tudo.cv), linhasDe(w2, verm.cv)]);
+    marcarTempo("  OCR (as duas)", t0);
     for (const l of linhasVerm) {
       const k = l.palavras.findIndex((p) => /CF/.test(p.texto));
       if (k < 0 || /^\d{1,2}CF/.test(l.palavras[k].texto) || (k > 0 && /^\d{1,2}$/.test(l.palavras[k - 1].texto))) continue;
@@ -1259,5 +1284,10 @@
     };
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  /** deixa tudo pronto para a 1ª leitura: os dois leitores e a inclinação da folha */
+  function prepararProjeto(proj, pag = 1) {
+    return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
+  }
+
+  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();

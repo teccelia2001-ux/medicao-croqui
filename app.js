@@ -829,8 +829,8 @@
         if (v.paginas > 1) return render(); // aparece a troca de folha
       }
       atualizarMarcas();
-      // deixa o leitor do nome do poste pronto para o primeiro toque
-      if (!soLeitura(o) && navigator.onLine) setTimeout(() => Croqui.prepararLeitura().catch(() => {}), 1500);
+      // deixa os leitores e a inclinação da folha prontos para o primeiro toque
+      if (!soLeitura(o)) setTimeout(() => Croqui.prepararProjeto(proj, estado.cqPag).catch(() => {}), 1500);
       const centrar = pontoPorId(estado.cqCentrar);
       estado.cqCentrar = null;
       if (centrar?.croqui) v.centralizar(centrar.croqui);
@@ -1206,9 +1206,21 @@
     return { operativo, lista, outros: [...new Set(outros)] };
   }
 
-  // leitura feita uma vez por lugar do ponto (enquanto o app está aberto)
+  // leitura feita uma vez por lugar do ponto e guardada no aparelho: abrir o ponto de novo
+  // (até em outro dia) não lê o projeto outra vez. Mudou o leitor → sobe LEITURA e lê de novo.
+  const LEITURA = 22;
   const lidosProjeto = new Map();
-  const chaveLido = (o, p) => `${o.id}|${o.projeto?.em}|${p.croqui.pag || 1}|${p.croqui.x}|${p.croqui.y}|${p.nome}`;
+  const chaveLido = (o, p) => `${LEITURA}|${o.id}|${o.projeto?.em}|${p.croqui.pag || 1}|${p.croqui.x}|${p.croqui.y}|${p.nome}`;
+  let guardadosProjeto = null;
+  const lidosGuardados = () => (guardadosProjeto = guardadosProjeto || Banco.ler("lidos_projeto", {}).then((g) => g || {}).catch(() => ({})));
+  async function guardarLido(k, lido) {
+    const g = await lidosGuardados();
+    g[k] = { lido, em: Date.now() };
+    // só os 300 mais novos
+    const ks = Object.keys(g);
+    if (ks.length > 300) ks.sort((a, b) => g[a].em - g[b].em).slice(0, ks.length - 300).forEach((x) => delete g[x]);
+    Banco.gravar("lidos_projeto", g).catch(() => {});
+  }
   function doProjeto(o, p) {
     const k = chaveLido(o, p);
     if (!lidosProjeto.has(k)) {
@@ -1216,10 +1228,15 @@
       (async () => {
         let r = { erro: true };
         try {
-          const proj = await garantirProjeto(o);
-          // o nome do ponto (P2) ajuda a achar o "(P2)" do projeto quando o OCR não lê ele
-          const lido = proj && await Croqui.lerProjeto(proj, p.croqui, (p.nome || "").trim().toUpperCase());
-          r = { lido };
+          const guardado = (await lidosGuardados())[k];
+          if (guardado) r = { lido: guardado.lido };
+          else {
+            const proj = await garantirProjeto(o);
+            // o nome do ponto (P2) ajuda a achar o "(P2)" do projeto quando o OCR não lê ele
+            const lido = proj && await Croqui.lerProjeto(proj, p.croqui, (p.nome || "").trim().toUpperCase());
+            r = { lido };
+            if (proj) guardarLido(k, lido || null);
+          }
         } catch (e) {
           console.warn("leitura do projeto:", e);
         }
