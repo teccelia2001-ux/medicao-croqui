@@ -555,6 +555,12 @@
         <button type="button" class="botao botao-perigo" data-acao="sair">Sair da conta</button>
       </section>
       <section class="cartao dados">
+        <b>Sugestão dos serviços</b>
+        <label class="chave-linha"><input type="checkbox" data-acao="sugestao-servicos" ${sugestaoLigada() ? "checked" : ""}>
+          <span>Sugerir os serviços lidos no projeto <small>(cartão "📐 No projeto" no ponto)</small></span></label>
+        <p class="sub">Desligada, o app não lê os serviços do croqui e não mostra as sugestões; os pontos (P) continuam sendo achados e você lança tudo pela busca.</p>
+      </section>
+      <section class="cartao dados">
         <b>Fotos</b>
         ${ehIos()
           ? `<p class="sub">No iPhone o app não consegue salvar sozinho na galeria. No ponto, toque em <b>💾 Salvar as fotos no celular</b> e escolha <b>Salvar imagens</b>.</p>`
@@ -752,7 +758,8 @@
         enviarDepois();
       }
       // as sugestões de cada ponto, uma de cada vez (ficam guardadas no aparelho)
-      const comLugar = M.pontosReais(o.pontos).filter((p) => p.croqui);
+      const comLugar = sugestaoLigada() ? M.pontosReais(o.pontos).filter((p) => p.croqui) : [];
+      a.semSugestao = !sugestaoLigada();
       Object.assign(a, { fase: "servicos", feitos: 0, total: comLugar.length });
       mostrarAnalise();
       for (const p of comLugar) {
@@ -775,7 +782,7 @@
     if (!a || a.obraId !== o.id) return "";
     const t = a.fase === "pontos" ? `🔎 Procurando os pontos (P)${a.pags > 1 ? ` na folha ${a.pag} de ${a.pags}` : " no projeto"}… ${a.total ? `${a.feitos} de ${a.total}` : ""}`
       : a.fase === "servicos" ? `🔎 Lendo os serviços de cada ponto… ${a.feitos} de ${a.total}`
-        : a.fase === "pronto" ? `✓ ${plural(a.achados, "ponto achado", "pontos achados")} no projeto, com as sugestões prontas`
+        : a.fase === "pronto" ? `✓ ${plural(a.achados, "ponto achado", "pontos achados")} no projeto${a.semSugestao ? "" : ", com as sugestões prontas"}`
           : `Não deu para analisar o projeto${a.erro ? `: ${esc(a.erro)}` : ""}.`;
     return `<div class="cq-dica cq-analise" id="cq-analise"><span>${t}</span></div>`;
   }
@@ -985,7 +992,7 @@
     n.lendo = false;
     n.lido = achou?.texto || "";
     // já emenda a leitura dos serviços deste lugar: ao criar o ponto as sugestões estão prontas
-    if (o?.projeto && !soLeitura(o)) lerSugestoes(o, { pag: n.pag, x: n.x, y: n.y }, achou?.nome || n.nome);
+    if (o?.projeto && !soLeitura(o) && sugestaoLigada()) lerSugestoes(o, { pag: n.pag, x: n.x, y: n.y }, achou?.nome || n.nome);
     if (estado.cqNovo !== n || estado.obra !== o) return;
     if (achou && !n.editado) {
       // o mesmo (P1) já marcado em outra folha (outro croqui da obra): este é o "P1-F2"
@@ -1402,7 +1409,7 @@
   const chaveSug = (x) => `${x.op}|${x.rotulo}`;
 
   function doProjetoHtml(o, p) {
-    if (p.geral || !p.croqui || !o.projeto || soLeitura(o)) return "";
+    if (p.geral || !p.croqui || !o.projeto || soLeitura(o) || !sugestaoLigada()) return "";
     const r = doProjeto(o, p);
     // só o P que identifica o ponto: o "(P1)" do projeto; sem ele, o número do F.P2
     const id = r.lido ? (r.lido.apelido || r.lido.poste).replace(/[()]/g, "").replace(/^[A-Z]{1,3}\.?(?=P)/, "") : "";
@@ -1732,6 +1739,11 @@
   const ehIos = () => /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const copiaLigada = () => {
     try { return localStorage.getItem("croqui_copia_fotos") !== "nao"; } catch (e) { return true; }
+  };
+  /** Sugestão dos serviços pelo projeto (Ajustes). Desligada: não lê os serviços no croqui
+   *  nem mostra o "No projeto"; achar os pontos (P) continua. Vale para este aparelho. */
+  const sugestaoLigada = () => {
+    try { return localStorage.getItem("croqui_sugestao") !== "nao"; } catch (e) { return true; }
   };
   const doisDig = (n) => String(n).padStart(2, "0");
   function nomeFoto(o, p, iso, k = 0) {
@@ -2648,6 +2660,10 @@
       const arquivos = [...t.files];
       t.value = "";
       return receberFotos(arquivos, t.dataset.origem || "galeria");
+    }
+    if (t.dataset.acao === "sugestao-servicos") {
+      try { localStorage.setItem("croqui_sugestao", t.checked ? "sim" : "nao"); } catch (err) { /* sem espaço */ }
+      return avisar(t.checked ? "Sugestão dos serviços ligada: o ponto mostra o que o projeto pede." : "Sugestão dos serviços desligada.");
     }
     if (t.dataset.acao === "copia-fotos") {
       try { localStorage.setItem("croqui_copia_fotos", t.checked ? "sim" : "nao"); } catch (err) { /* sem espaço */ }
