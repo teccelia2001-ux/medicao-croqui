@@ -1388,17 +1388,22 @@
     const p = ponto();
     const qtdOk = M.numero(estado.qtd) > 0;
     const ano = Number((p.dia || hoje()).slice(0, 4));
+    // tem Instalar e Retirar e nenhum dos dois lançado: botão do meio lança os dois
+    const ins = g.opcoes.find((s) => s.operacao === "INSTALAR"), ret = g.opcoes.find((s) => s.operacao === "RETIRAR");
+    const ambos = ins && ret && !p.itens.some((i) => i.sid === ins.id || i.sid === ret.id) && g.opcoes.indexOf(ins) + 1 === g.opcoes.indexOf(ret) ? [ins, ret] : null;
     return `<div class="fundo" data-acao="fechar-folha">
       <div class="folha" data-parar>
         <div class="folha-topo"><b>${esc(g.rotulo || g.codigo)}</b><button type="button" class="remover" data-acao="fechar-folha" aria-label="Fechar">×</button></div>
         <p>${g.rotulo ? `<small class="sub">Código ${esc(g.codigo)}</small>` : `${esc(g.descricao)} <i class="sigla sigla-${esc(sigla(g.departamento).replace("&", "").toLowerCase())}">${esc(sigla(g.departamento))}</i>`}</p>
         <div class="campo">Quantidade ${campoQtd(estado.qtd, `id="qtd-folha" aria-label="Quantidade"`, true)}</div>
-        <div class="opcoes">
+        <div class="opcoes${ambos ? " opcoes-ambos" : ""}">
           ${g.opcoes.map((s) => {
             const ja = p.itens.some((i) => i.sid === s.id);
             const valor = M.valorItem({ quantidade: estado.qtd, us: s.us, valor_us: M.valorUS(s.departamento, ano) });
-            return `<button type="button" class="opcao opcao-${(s.operacao || "").toLowerCase()}${g.opSugerida === s.operacao ? " opcao-sugerida" : ""}" data-acao="adicionar" data-sid="${s.id}" ${ja || !qtdOk ? "disabled" : ""}>
+            const botao = `<button type="button" class="opcao opcao-${(s.operacao || "").toLowerCase()}${g.opSugerida === s.operacao ? " opcao-sugerida" : ""}" data-acao="adicionar" data-sid="${s.id}" ${ja || !qtdOk ? "disabled" : ""}>
               ${ja ? "✓ " : ""}${esc(ROTULO[s.operacao] ?? s.operacao)}<small data-valor-op="${s.id}">${qtdOk ? M.fmtMoeda(valor) : ""}</small></button>`;
+            // entre Instalar e Retirar: os dois de uma vez, com a mesma quantidade
+            return ambos && s === ambos[0] ? botao + `<button type="button" class="opcao-ambos" data-acao="adicionar-ambos" data-sids="${ambos.map((x) => x.id).join(",")}" data-ambos ${qtdOk ? "" : "disabled"} aria-label="Lançar instalar e retirar" title="Lançar instalar e retirar">⇅<small>os dois</small></button>` : botao;
           }).join("")}
         </div>
         ${!qtdOk ? `<small class="folha-dica">Digite a quantidade e escolha o tipo.</small>` : ""}
@@ -1964,14 +1969,24 @@
   }
 
   function adicionarItem(sid) {
+    return adicionarItens([sid]);
+  }
+  /** lança os serviços (instalar e/ou retirar do mesmo código) com a quantidade digitada */
+  function adicionarItens(sids) {
     const p = ponto();
-    const s = M.POR_ID.get(sid);
-    if (!s || p.itens.some((i) => i.sid === sid) || M.numero(estado.qtd) <= 0) return;
+    if (M.numero(estado.qtd) <= 0) return;
     const ano = Number((p.dia || hoje()).slice(0, 4));
-    p.itens.push({
-      sid: s.id, codigo: s.codigo, descricao: s.descricao, operacao: s.operacao, departamento: s.departamento,
-      us: s.us, valor_us: M.valorUS(s.departamento, ano), quantidade: estado.qtd,
-    });
+    let algum = false;
+    for (const sid of sids) {
+      const s = M.POR_ID.get(sid);
+      if (!s || p.itens.some((i) => i.sid === sid)) continue;
+      p.itens.push({
+        sid: s.id, codigo: s.codigo, descricao: s.descricao, operacao: s.operacao, departamento: s.departamento,
+        us: s.us, valor_us: M.valorUS(s.departamento, ano), quantidade: estado.qtd,
+      });
+      algum = true;
+    }
+    if (!algum) return;
     salvarAgora();
     estado.qtd = "";
     // código com instalar e retirar continua aberto para lançar o outro tipo
@@ -2061,6 +2076,7 @@
       const ja = p.itens.some((i) => i.sid === s.id);
       el.parentElement.disabled = ja || !qtdOk;
     });
+    document.querySelectorAll("[data-ambos]").forEach((b) => { b.disabled = !qtdOk; });
     const dica = document.querySelector(".folha-dica");
     if (dica) dica.hidden = qtdOk;
   }
@@ -2307,6 +2323,7 @@
         estado.escolhido = null;
         return render();
       case "adicionar": return adicionarItem(Number(alvo.dataset.sid));
+      case "adicionar-ambos": return adicionarItens(alvo.dataset.sids.split(",").map(Number));
       case "remover-item": {
         const p = ponto();
         p.itens = p.itens.filter((i) => i.sid !== Number(alvo.dataset.sid));
