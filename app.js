@@ -1773,29 +1773,43 @@
     </div>`;
   }
 
-  /** Serviços do vão: os por metro (nivelamento) já com a metragem e os espaçadores já com
-   *  a quantidade informada. Tocar abre a quantidade para conferir e lançar. */
+  /** Serviços do vão, pré-definidos pelo supervisor (17/11/2026), todos da LM:
+   *  [grupo, [[código, nome curto, "esp" (quantidade de espaçadores) ou "m" (metragem)]]] */
+  const VAO_RAPIDOS = [
+    ["ESPAÇADORES", [["62007", "Losangular", "esp"], ["60058", "Vertical", "esp"]]],
+    ["CONDUTOR", [
+      ["64228", "Multiplex ≤ 70 mm²", "m"], ["62051", "Multiplex > 70 mm²", "m"],
+      ["64229", "Cabo nu ≤ 2/0 BT", "m"], ["64230", "Cabo nu ≤ 2/0 MT", "m"], ["62088", "Cabo nu > 2/0 MT", "m"],
+      ["66007", "Protegido ≤ 95 mm²", "m"], ["66005", "Protegido > 95 mm²", "m"], ["62099", "Cordoalha", "m"],
+    ]],
+    ["RETENCIONAMENTO", [
+      ["62263", "Protegido < 120 mm", "m"], ["60026", "Protegido ≥ 120 mm", "m"],
+      ["64200", "Multiplex ≤ 70 mm", "m"], ["62141", "Multiplex > 70 mm", "m"],
+      ["64208", "Nu ≤ 2/0 MT", "m"], ["64202", "Nu > 2/0 MT", "m"], ["64210", "Nu ≤ 2/0 BT", "m"],
+    ]],
+  ];
+  /** Serviços do vão: os por metro já com a metragem e os espaçadores já com a quantidade
+   *  informada. Tocar abre a quantidade para conferir e lançar (instalar ou retirar). */
   function vaoServicosHtml(p) {
-    const dep = depRapidos === "LV" ? "C&M (LV)" : "C&M (LM)";
-    const tipo = (g) => (/nivelamento vao/.test(normalizar(g.descricao)) ? 0 : 1);
-    const lista = grupos().filter((g) => g.departamento === dep && /nivelamento vao|espacador/.test(normalizar(g.descricao)))
-      .sort((a, b) => tipo(a) - tipo(b) || a.descricao.localeCompare(b.descricao, "pt-BR"));
-    const botoes = lista.map((g) => {
-      const porMetro = /nivelamento vao/.test(normalizar(g.descricao));
-      const qtd = porMetro ? p.vao.metros : p.vao.espacadores;
-      const usado = p.itens.some((i) => i.codigo === g.codigo && i.departamento === g.departamento);
-      // sem o LM/LV e o "POR M" (já mostrados), mas com o (SDMT)/(SDBT): há o mesmo nome nos dois
-      const nome = g.descricao.replace(/\s+(LM|LV)\b/, "").replace(/\s*POR M\s*$/, "").replace(/^NIVELAMENTO VÃO /, "Nivelamento ").replace(/\s+/g, " ").trim();
-      return `<button type="button" class="rapido vao-servico${usado ? " rapido-usado" : ""}" data-acao="vao-servico" data-chave="${esc(g.chave)}" data-vao-qtd="${porMetro ? "m" : "esp"}" data-qtd="${esc(qtd || "")}">
-        <span>${esc(nome)} <small>${esc(g.codigo)}${porMetro ? " · por m" : ""}</small></span>${qtd ? `<b class="rapido-qtd q-ins" data-vao-mostra>${esc(qtd)}${porMetro ? " m" : ""}</b>` : `<b class="rapido-qtd q-ins" data-vao-mostra hidden></b>`}</button>`;
-    }).join("");
+    const dep = "C&M (LM)";
+    const grupoHtml = ([titulo, itens]) => `<div class="rapidos-grupo">
+      <small class="cat">${esc(titulo)}</small>
+      <div class="rapidos rapidos-vao">${itens.map(([cod, rot, tipo]) => {
+        const porMetro = tipo === "m";
+        const qtd = porMetro ? p.vao.metros : p.vao.espacadores;
+        const lancados = p.itens.filter((i) => i.codigo === cod && i.departamento === dep);
+        const soma = (ops) => lancados.filter((i) => ops.includes(i.operacao)).reduce((t, i) => t + M.numero(i.quantidade), 0);
+        const inst = soma(["INSTALAR", "EXECUTAR"]), ret = soma(["RETIRAR"]);
+        const selos = (inst ? `<b class="rapido-qtd q-ins" title="Instalado">${M.fmtQtd(inst)}</b>` : "") + (ret ? `<b class="rapido-qtd q-ret" title="Retirado">${M.fmtQtd(ret)}</b>` : "");
+        return `<button type="button" class="rapido vao-servico${lancados.length ? " rapido-usado" : ""}" data-acao="vao-servico" data-chave="${esc(`${dep}|${cod}`)}" data-rotulo="${esc(rot)}" data-vao-qtd="${tipo}" data-qtd="${esc(qtd || "")}">
+          <span>${esc(rot)} <small>${esc(cod)}${porMetro ? " · por m" : ""}</small></span>
+          <span class="rapido-qtds">${selos || (qtd ? `<i class="vao-qtd" data-vao-mostra>${esc(qtd)}${porMetro ? " m" : ""}</i>` : `<i class="vao-qtd" data-vao-mostra hidden></i>`)}</span></button>`;
+      }).join("")}</div>
+    </div>`;
     return `<section class="cartao vao-servicos">
       <b>Serviços do vão</b>
       <small class="sub">A metragem vai para os serviços por metro e os espaçadores para o espaçador. Toque para conferir e lançar.</small>
-      <div class="dep-rapidos" role="group" aria-label="Departamento">
-        ${["LM", "LV"].map((d) => `<button type="button" class="dep-rapido${d === depRapidos ? " ativo" : ""}" data-acao="dep-rapidos" data-dep="${d}" aria-pressed="${d === depRapidos}">${d}</button>`).join("")}
-      </div>
-      <div class="rapidos rapidos-vao">${botoes || `<p class="vazio">Nenhum serviço de vão no catálogo.</p>`}</div>
+      ${VAO_RAPIDOS.map(grupoHtml).join("")}
     </section>`;
   }
   /** a metragem ou os espaçadores mudaram: troca só a quantidade dos botões (o teclado fica) */
@@ -2783,8 +2797,8 @@
       }
       case "vao-servico": { // serviço do vão: abre a quantidade com a metragem ou os espaçadores
         const g = grupos().find((x) => x.chave === alvo.dataset.chave);
-        if (!g) return;
-        estado.escolhido = { ...g };
+        if (!g) return avisar("Esse código não está no catálogo baixado.", "erro");
+        estado.escolhido = { ...g, rotulo: alvo.dataset.rotulo };
         estado.qtd = alvo.dataset.qtd || "";
         return render();
       }
