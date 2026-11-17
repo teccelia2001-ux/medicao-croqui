@@ -769,6 +769,107 @@
     return { geral, porPonto };
   }
 
+  // ------------------------------------------------------------------ símbolo do poste
+  /** Símbolos de poste em volta de `pos` ({ pag, x, y }, fração da folha): os quadradinhos
+   *  pretos cheios (no meio do círculo vermelho). Recorte de `largura` (fração da largura da
+   *  folha). Devolve [{ x, y }] em fração da folha e `k` = altura/largura da folha. */
+  async function postesPerto(proj, pos, largura = 0.44, px = 2000) {
+    const pag = pos.pag || 1;
+    const doc = await abrir(proj);
+    const f = await folha(doc, Math.min(Math.max(1, pag), doc.paginas));
+    const { cv, w, h } = await imagem(proj, { pag, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura, proporcao: 1 } });
+    const d = cv.getContext("2d").getImageData(0, 0, w, h).data;
+    cv.width = cv.height = 0;
+    const N = w * h, preto = new Uint8Array(N);
+    for (let k = 0, i = 0; k < N; k++, i += 4) {
+      const mx = Math.max(d[i], d[i + 1], d[i + 2]);
+      if (mx < 110 && mx - Math.min(d[i], d[i + 1], d[i + 2]) < 50) preto[k] = 1;
+    }
+    const escala = w / (largura * f.W); // px do recorte por ponto da folha
+    const visto = new Uint8Array(N), pilha = [], achados = [];
+    for (let s0 = 0; s0 < N; s0++) {
+      if (!preto[s0] || visto[s0]) continue;
+      let x0 = w, y0 = h, x1 = 0, y1 = 0, n = 0;
+      visto[s0] = 1;
+      pilha.push(s0);
+      while (pilha.length) {
+        const k = pilha.pop(), x = k % w, y = (k / w) | 0;
+        n++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x > 0 && preto[k - 1] && !visto[k - 1]) { visto[k - 1] = 1; pilha.push(k - 1); }
+        if (x < w - 1 && preto[k + 1] && !visto[k + 1]) { visto[k + 1] = 1; pilha.push(k + 1); }
+        if (y > 0 && preto[k - w] && !visto[k - w]) { visto[k - w] = 1; pilha.push(k - w); }
+        if (y < h - 1 && preto[k + w] && !visto[k + w]) { visto[k + w] = 1; pilha.push(k + w); }
+      }
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1, lado = Math.max(bw, bh) / escala; // lado em pontos
+      // quadrado cheio de 2 a 20 pontos (as letras pretas são finas: enchem pouco a caixa)
+      if (Math.max(bw, bh) < 7 || lado < 1.5 || lado > 20 || bw / bh < 0.5 || bw / bh > 2 || n / (bw * bh) < 0.55) continue;
+      const cx = (x0 + x1 + 1) / 2, cy = (y0 + y1 + 1) / 2;
+      achados.push({
+        x: Math.round((pos.x + (cx - w / 2) / escala / f.W) * 1e5) / 1e5,
+        y: Math.round((pos.y + (cy - h / 2) / escala / f.H) * 1e5) / 1e5,
+      });
+    }
+    return { postes: achados, k: f.H / f.W };
+  }
+  /** o símbolo de poste mais perto de `pos` (para o toque "grudar" no poste), ou null */
+  async function acharPosteSimbolo(proj, pos, largura = 0.06) {
+    const { postes, k } = await postesPerto(proj, pos, largura, 900);
+    let melhor = null;
+    for (const q of postes) {
+      const d = Math.hypot(q.x - pos.x, (q.y - pos.y) * k);
+      if (!melhor || d < melhor.d) melhor = { ...q, d };
+    }
+    return melhor && { x: melhor.x, y: melhor.y };
+  }
+  /** Linha do vão entre os postes dos rótulos `a` e `b` ({ pag, x, y } do (P) de cada um):
+   *  [[x, y], [x, y]] de quadradinho a quadradinho, ou null. Cada poste perto do seu (P) e,
+   *  entre os pares, o que tem a reta entre os dois por cima da rede vermelha tracejada (o
+   *  poste fica em lugares diferentes em volta do (P): à esquerda, depois da caixa de texto,
+   *  acima...). */
+  async function linhaDoVao(proj, a, b) {
+    const [pa, pb] = [await postesPerto(proj, a), await postesPerto(proj, b)];
+    if (!pa.postes.length || !pb.postes.length) return null;
+    const k = pa.k;
+    // a folha inteira, para ver onde a reta passa por cima de vermelho
+    const { cv, w, h } = await imagem(proj, { pag: a.pag || 1, px: 2400, canvas: true });
+    const d = cv.getContext("2d").getImageData(0, 0, w, h).data;
+    cv.width = cv.height = 0;
+    const raio = Math.max(2, Math.round(w / 700));
+    const vermelho = (x, y) => {
+      const cx = Math.round(x * w), cy = Math.round(y * h);
+      for (let yy = cy - raio; yy <= cy + raio; yy++) {
+        if (yy < 0 || yy >= h) continue;
+        for (let xx = cx - raio; xx <= cx + raio; xx++) {
+          if (xx < 0 || xx >= w) continue;
+          const i = (yy * w + xx) * 4;
+          if (d[i] > 150 && d[i + 1] < 110 && d[i + 2] < 110) return true;
+        }
+      }
+      return false;
+    };
+    // quanto da reta (tirando as pontas, onde fica o símbolo) cai em cima de vermelho
+    const naRede = (p, q) => {
+      let n = 0;
+      for (let t = 0.15; t <= 0.851; t += 0.035) if (vermelho(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t)) n++;
+      return n / 21;
+    };
+    const longe = (q, r) => Math.hypot(q.x - r.x, (q.y - r.y) * k);
+    const entreRotulos = longe(a, b);
+    let melhor = null;
+    for (const sa of pa.postes) {
+      for (const sb of pb.postes) {
+        // o mesmo símbolo, ou um vão bem mais curto que a distância entre os (P): não é este
+        if (longe(sa, sb) < Math.max(0.003, entreRotulos * 0.35)) continue;
+        const rede = naRede(sa, sb);
+        const custo = longe(sa, a) + longe(sb, b) + 0.15 * (1 - rede);
+        if (!melhor || custo < melhor.custo) melhor = { custo, rede, l: [[sa.x, sa.y], [sb.x, sb.y]] };
+      }
+    }
+    // só com certeza: a reta corre por cima da rede vermelha (senão o supervisor ajusta)
+    return melhor && melhor.rede >= 0.5 ? melhor.l : null;
+  }
+
   // ------------------------------------------------------------------ croqui anotado (PDF)
   const AZUL = "#1d4ed8"; // anotações e rascunho do campo
 
@@ -853,7 +954,21 @@
           ctx.stroke();
         }
       }
-      // vãos: metragem e espaçadores no meio do vão
+      // vãos: a linha de um poste ao outro (por cima da rede) e a metragem no meio
+      ctx.setLineDash([r * 0.9, r * 0.6]);
+      for (const v of fl.vaos || []) {
+        if (!v.linha) continue;
+        const [[ax, ay], [bx, by]] = v.linha;
+        for (const [cor, l] of [["#fff", r * 0.45 + 3], ["#7c3aed", r * 0.45]]) {
+          ctx.strokeStyle = cor;
+          ctx.lineWidth = l;
+          ctx.beginPath();
+          ctx.moveTo(ax * w, ay * h);
+          ctx.lineTo(bx * w, by * h);
+          ctx.stroke();
+        }
+      }
+      ctx.setLineDash([]);
       ctx.font = `700 ${Math.round(r * 1.5)}px Helvetica, Arial, sans-serif`;
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
@@ -1761,5 +1876,5 @@
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, croquiAnotado, AZUL, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  window.Croqui = { Visor, imagem, paginas, paraPdf, croquiAnotado, acharPosteSimbolo, postesPerto, linhaDoVao, AZUL, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();
