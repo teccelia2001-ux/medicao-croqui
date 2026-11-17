@@ -1387,10 +1387,58 @@
     return lista;
   }
 
+  // ------------------------------------------------------------------ vários croquis numa obra
+  // Os arquivos (PDFs e fotos) viram um PDF só, uma folha atrás da outra: a troca de folha,
+  // a análise e o PDF da medição valem para todos. pdf-lib pelo cdnjs (guardado pelo sw.js).
+  const PDFLIB = "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js";
+  let carregandoPdfLib = null;
+  function pdfLib() {
+    if (window.PDFLib) return Promise.resolve(window.PDFLib);
+    carregandoPdfLib = carregandoPdfLib || new Promise((ok, falha) => {
+      const s = document.createElement("script");
+      s.src = PDFLIB;
+      s.onload = () => ok(window.PDFLib);
+      s.onerror = () => { carregandoPdfLib = null; falha(new Error("Não deu para juntar os croquis. Abra o app uma vez com internet.")); };
+      document.head.appendChild(s);
+    });
+    return carregandoPdfLib;
+  }
+  /** foto em JPEG já de pé (a orientação da câmera aplicada) */
+  async function fotoEmJpeg(arquivo) {
+    const img = await abrirImagem(arquivo);
+    const c = document.createElement("canvas");
+    c.width = img.width;
+    c.height = img.height;
+    c.getContext("2d").drawImage(img, 0, 0);
+    const blob = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.9));
+    return { bytes: await blob.arrayBuffer(), w: img.width, h: img.height };
+  }
+  /** Junta vários croquis (PDFs e fotos) num PDF: { blob, paginas }. */
+  async function juntarCroquis(arquivos) {
+    const { PDFDocument } = await pdfLib();
+    const saida = await PDFDocument.create();
+    for (const a of arquivos) {
+      const ehPdf = a.type === "application/pdf" || /\.pdf$/i.test(a.name || "");
+      if (ehPdf) {
+        const doc = await PDFDocument.load(await a.arrayBuffer(), { ignoreEncryption: true });
+        for (const pg of await saida.copyPages(doc, doc.getPageIndices())) saida.addPage(pg);
+      } else {
+        // foto: uma folha do tamanho dela (até o tamanho de um A2)
+        const f = await fotoEmJpeg(a);
+        const img = await saida.embedJpg(f.bytes);
+        const k = Math.min(1, 1684 / Math.max(f.w, f.h));
+        const pg = saida.addPage([f.w * k, f.h * k]);
+        pg.drawImage(img, { x: 0, y: 0, width: f.w * k, height: f.h * k });
+      }
+    }
+    const bytes = await saida.save();
+    return { blob: new Blob([bytes], { type: "application/pdf" }), paginas: saida.getPageCount() };
+  }
+
   /** deixa tudo pronto para a 1ª leitura: os dois leitores e a inclinação da folha */
   function prepararProjeto(proj, pag = 1) {
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, acharPontos, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, acharPontos, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();

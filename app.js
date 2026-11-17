@@ -597,13 +597,18 @@
   /** projeto da obra (o croqui): o que está anexado e o botão de anexar/trocar */
   function projetoHtml(o) {
     const novo = estado.projetoNovo;
-    const atual = novo ? { nome: novo.nome, tamanho: novo.blob.size } : o.projeto;
+    const atual = novo ? { nome: novo.nome, tamanho: novo.blob.size, paginas: novo.paginas } : o.projeto;
     const marcados = o.pontos.filter((p) => p.croqui).length;
+    const folhas = atual?.paginas > 1 ? ` · ${atual.paginas} folhas` : "";
     return `<b>Projeto da obra <small class="sub-inline">(croqui)</small></b>
-      <p class="sub">PDF ou foto do projeto. É nele que você toca no poste para lançar os serviços.</p>
-      ${atual ? `<div class="projeto-atual"><span>📄</span><div><b>${esc(atual.nome)}</b><small class="sub">${fmtMb(atual.tamanho || 0)}${novo ? " · novo, falta salvar" : ""}</small></div></div>` : ""}
-      ${novo && o.projeto && marcados ? `<p class="faixa faixa-guardado">Os ${marcados} pontos já marcados ficam no mesmo lugar da folha. Se o projeto novo for diferente, mude o lugar deles no croqui.</p>` : ""}
-      <label class="botao ${atual ? "botao-claro" : ""}">📎 ${atual ? "Trocar o projeto" : "Anexar o projeto"}<input type="file" accept="application/pdf,.pdf,image/*" data-acao="projeto" hidden></label>`;
+      <p class="sub">PDF ou foto do projeto. É nele que você toca no poste para lançar os serviços. A obra tem mais de um croqui? Escolha todos de uma vez ou use "Adicionar folhas": eles viram as folhas do projeto.</p>
+      ${estado.juntando ? `<p class="sub">⏳ Juntando os croquis…</p>` : ""}
+      ${atual ? `<div class="projeto-atual"><span>📄</span><div><b>${esc(atual.nome)}</b><small class="sub">${fmtMb(atual.tamanho || 0)}${folhas}${novo ? " · novo, falta salvar" : ""}</small></div></div>` : ""}
+      ${novo?.modo === "trocar" && o.projeto && marcados ? `<p class="faixa faixa-guardado">Os ${marcados} pontos já marcados ficam no mesmo lugar da folha. Se o projeto novo for diferente, mude o lugar deles no croqui.</p>` : ""}
+      <div class="dupla">
+        <label class="botao ${atual ? "botao-claro" : ""}">📎 ${atual ? "Trocar o projeto" : "Anexar o projeto"}<input type="file" accept="application/pdf,.pdf,image/*" multiple data-acao="projeto" data-modo="trocar" hidden></label>
+        ${atual ? `<label class="botao botao-claro">➕ Adicionar folhas<input type="file" accept="application/pdf,.pdf,image/*" multiple data-acao="projeto" data-modo="adicionar" hidden></label>` : ""}
+      </div>`;
   }
 
   // ---------- obra (pontos)
@@ -705,17 +710,20 @@
       const pags = await Croqui.paginas(proj);
       const achados = [];
       for (let pag = 1; pag <= pags; pag++) {
-        achados.push(...(await Croqui.acharPontos(proj, pag, (f, t) => { Object.assign(a, { feitos: f, total: t }); mostrarAnalise(); })));
+        achados.push(...(await Croqui.acharPontos(proj, pag, (f, t) => { Object.assign(a, { feitos: f, total: t, pag, pags }); mostrarAnalise(); })));
       }
       a.achados = achados.length;
       // a obra pode ter sido recarregada no meio: trabalha na que está valendo
       const o = estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra;
       for (const x of achados) {
         const croqui = { pag: x.pag, x: arred(x.x), y: arred(x.y) };
-        const ja = M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === x.nome);
+        const comNome = (n) => M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === n);
+        let nome = x.nome, ja = comNome(nome);
+        // outro croqui da obra pode recomeçar do P1: o da outra folha vira "P1-F2"
+        if (ja?.croqui && (ja.croqui.pag || 1) !== x.pag) { nome = `${x.nome}-F${x.pag}`; ja = comNome(nome); }
         if (ja) { if (!ja.croqui) ja.croqui = croqui; continue; } // já lançado: só ganha o lugar
         // sem data: a data de execução entra quando o 1º serviço for lançado
-        o.pontos.push({ id: novoId(), nome: x.nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true });
+        o.pontos.push({ id: novoId(), nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true });
       }
       if (estado.obra === o) {
         await salvarAgora();
@@ -746,7 +754,7 @@
   function analiseHtml(o) {
     const a = estado.analise;
     if (!a || a.obraId !== o.id) return "";
-    const t = a.fase === "pontos" ? `🔎 Procurando os pontos (P) no projeto… ${a.total ? `${a.feitos} de ${a.total}` : ""}`
+    const t = a.fase === "pontos" ? `🔎 Procurando os pontos (P)${a.pags > 1 ? ` na folha ${a.pag} de ${a.pags}` : " no projeto"}… ${a.total ? `${a.feitos} de ${a.total}` : ""}`
       : a.fase === "servicos" ? `🔎 Lendo os serviços de cada ponto… ${a.feitos} de ${a.total}`
         : a.fase === "pronto" ? `✓ ${plural(a.achados, "ponto achado", "pontos achados")} no projeto, com as sugestões prontas`
           : `Não deu para analisar o projeto${a.erro ? `: ${esc(a.erro)}` : ""}.`;
@@ -789,7 +797,7 @@
         ${dica}
         ${pags > 1 ? `<div class="cq-folhas">
           <button type="button" data-acao="cq-pag" data-p="${pag - 1}" ${pag <= 1 ? "disabled" : ""} aria-label="Folha anterior">‹</button>
-          <span>Folha ${pag} de ${pags}</span>
+          <span>Folha ${pag} de ${pags}<small>${plural(reais.filter((p) => p.croqui && (p.croqui.pag || 1) === pag).length, "ponto", "pontos")}</small></span>
           <button type="button" data-acao="cq-pag" data-p="${pag + 1}" ${pag >= pags ? "disabled" : ""} aria-label="Próxima folha">›</button>
         </div>` : ""}
         <div class="cq-controles">
@@ -960,7 +968,11 @@
     // já emenda a leitura dos serviços deste lugar: ao criar o ponto as sugestões estão prontas
     if (o?.projeto && !soLeitura(o)) lerSugestoes(o, { pag: n.pag, x: n.x, y: n.y }, achou?.nome || n.nome);
     if (estado.cqNovo !== n || estado.obra !== o) return;
-    if (achou && !n.editado) n.nome = achou.nome;
+    if (achou && !n.editado) {
+      // o mesmo (P1) já marcado em outra folha (outro croqui da obra): este é o "P1-F2"
+      const outro = M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === achou.nome && p.croqui && (p.croqui.pag || 1) !== n.pag);
+      n.nome = outro ? `${achou.nome}-F${n.pag}` : achou.nome;
+    }
     // digitando: não refaz a tela (o teclado fecharia), só troca o aviso
     if (n.editado) {
       const aviso = document.getElementById("cq-lido");
@@ -1009,15 +1021,49 @@
     }
   }
 
-  /** arquivo escolhido em "Anexar o projeto" */
-  function receberProjeto(arquivo) {
-    if (!arquivo) return;
-    const pdf = arquivo.type === "application/pdf" || /\.pdf$/i.test(arquivo.name);
-    const img = /^image\//.test(arquivo.type);
-    if (!pdf && !img) return avisar("Escolha o projeto em PDF ou uma foto/imagem.", "erro");
-    if (arquivo.size > 45 * 1024 * 1024) return avisar("Arquivo muito grande (máximo 45 MB).", "erro");
-    const tipo = pdf ? "application/pdf" : arquivo.type === "image/png" ? "image/png" : "image/jpeg";
-    estado.projetoNovo = { blob: arquivo, nome: arquivo.name || (pdf ? "projeto.pdf" : "projeto.jpg"), tipo };
+  /** arquivos escolhidos em "Anexar/Trocar o projeto" ou "Adicionar folhas" (mais de um
+   *  croqui: viram um PDF só, uma folha atrás da outra) */
+  async function receberProjeto(arquivos, modo = "trocar") {
+    if (!arquivos.length) return;
+    const ehPdf = (a) => a.type === "application/pdf" || /\.pdf$/i.test(a.name || "");
+    if (arquivos.some((a) => !ehPdf(a) && !/^image\//.test(a.type))) return avisar("Escolha o projeto em PDF ou foto/imagem.", "erro");
+    if (arquivos.reduce((t, a) => t + a.size, 0) > 45 * 1024 * 1024) return avisar("Arquivos muito grandes (máximo 45 MB juntos).", "erro");
+    const arquivo = arquivos[0];
+    if (arquivos.length === 1 && modo === "trocar") {
+      const pdf = ehPdf(arquivo);
+      const tipo = pdf ? "application/pdf" : arquivo.type === "image/png" ? "image/png" : "image/jpeg";
+      estado.projetoNovo = { blob: arquivo, nome: arquivo.name || (pdf ? "projeto.pdf" : "projeto.jpg"), tipo, modo };
+    } else {
+      // adicionar: o projeto atual (o novo ainda sem salvar, ou o guardado) vem primeiro
+      const lista = [...arquivos];
+      let nomeBase = arquivo.name || "projeto";
+      if (modo === "adicionar") {
+        const o = estado.obra;
+        const atual = estado.projetoNovo || (o.projeto && (await garantirProjeto(o)));
+        if (atual?.blob) {
+          lista.unshift(new File([atual.blob], atual.nome || "projeto.pdf", { type: atual.tipo || "application/pdf" }));
+          nomeBase = atual.nome || nomeBase;
+        }
+      }
+      estado.juntando = true;
+      const sec0 = document.getElementById("sec-projeto");
+      if (sec0) sec0.innerHTML = projetoHtml(estado.obra);
+      try {
+        const junto = await Croqui.juntarCroquis(lista);
+        // "projeto.pdf + 1 croqui" mais 1 → "+ 2 croquis"
+        const jaTinha = Number((/\+ (\d+) croquis?$/.exec(nomeBase) || [])[1] || 0);
+        const extras = modo === "adicionar" && lista.length > arquivos.length ? jaTinha + arquivos.length : lista.length - 1;
+        estado.projetoNovo = {
+          blob: junto.blob, tipo: "application/pdf", paginas: junto.paginas, modo,
+          nome: `${nomeBase.replace(/( \+ \d+ croquis?)+$/, "")}${extras ? ` + ${extras} croqui${extras > 1 ? "s" : ""}` : ""}`,
+        };
+        avisar(`${plural(junto.paginas, "folha", "folhas")} no projeto. Falta salvar.`);
+      } catch (e) {
+        console.error(e);
+        avisar(e.message || "Não deu para juntar os croquis.", "erro");
+      }
+      estado.juntando = false;
+    }
     // número da obra no nome do arquivo (ex.: 0032503206.pdf): preenche se o campo está vazio
     const campo = document.getElementById("f-numero");
     const digitos = (arquivo.name.match(/\d[\d.\-\s]*\d/g) || []).map((d) => d.replace(/\D/g, "")).find(obraValida);
@@ -1310,7 +1356,8 @@
         else {
           const proj = await garantirProjeto(o);
           // o nome do ponto (P2) ajuda a achar o "(P2)" do projeto quando o OCR não lê ele
-          const lido = proj && await Croqui.lerProjeto(proj, croqui, (nome || "").trim().toUpperCase());
+          // ("P1-F2": o ponto P1 da folha 2; no projeto está escrito "(P1)")
+          const lido = proj && await Croqui.lerProjeto(proj, croqui, (nome || "").trim().toUpperCase().replace(/-F\d+$/, ""));
           r = { lido };
           if (proj) guardarLido(k, lido || null);
         }
@@ -2050,7 +2097,7 @@
         avisar("Não foi possível guardar o projeto no celular. Libere espaço.", "erro");
         return;
       }
-      o.projeto = { nome: pn.nome, tipo: pn.tipo, tamanho: pn.blob.size, em };
+      o.projeto = { nome: pn.nome, tipo: pn.tipo, tamanho: pn.blob.size, em, ...(pn.paginas ? { paginas: pn.paginas } : {}) };
       estado.projetoNovo = null;
       estado.cqPag = 1;
     }
@@ -2578,9 +2625,9 @@
     const t = e.target;
     const p = ponto();
     if (t.dataset.acao === "projeto") {
-      const arquivo = t.files[0];
+      const arquivos = [...t.files];
       t.value = "";
-      return receberProjeto(arquivo);
+      return receberProjeto(arquivos, t.dataset.modo || "trocar");
     }
     if (t.dataset.acao === "foto") {
       const arquivos = [...t.files];
