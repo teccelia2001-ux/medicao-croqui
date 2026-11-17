@@ -726,7 +726,7 @@
       const itens = p.itens.filter((i) => i.operacao === op);
       if (!itens.length) return "";
       return `<div class="cq-secao"><small class="secao secao-${op.toLowerCase()}"><span>${SECAO[op]}</span><span>${M.fmtMoeda(M.soma(itens, M.valorItem))}</span></small>
-        ${porCategoria(itens, (i) => `<div class="cq-item"><span title="${esc(i.descricao)}">${esc(nomeNaTela(i))} <small>${esc(i.codigo)}</small></span><b>${M.fmtQtd(i.quantidade)}</b></div>`)}</div>`;
+        ${porCategoria(itens, (i) => `<div class="cq-item"><span>${esc(i.descricao)} <small>${esc(i.codigo)}</small></span><b>${M.fmtQtd(i.quantidade)}</b></div>`)}</div>`;
     }).join("");
     const fotos = p.fotos.map((id, k) => {
       const url = estado.miniaturas.get(id);
@@ -1010,11 +1010,36 @@
     ["Poda", [["60131", "PODA P", "P&LF"], ["60133", "PODA M", "P&LF"]]],
   ];
   const DEP_RAPIDOS = "C&M (LM)"; // departamento de quem não diz outro
-  const NOME_CURTO = new Map(RAPIDOS.flatMap(([, itens]) => itens.map(([cod, rot, dep = DEP_RAPIDOS]) => [`${dep}|${cod}`, rot])));
+  // lista da linha viva (passada pelo supervisor em 17/11/2026). Na lista dele vieram 62172,
+  // 62089 e 62251, que não existem no catálogo: usados os vizinhos com o mesmo nome
+  // (60172 nivelamento protegido >= 120mm, 62086 jumper, 62252 para-raio polimérico).
+  const LV_ = "C&M (LV)";
+  const RAPIDOS_LV = [
+    ["Nivelamento de rede", [["62116", "RET PROTEGIDO <120MM", LV_], ["60172", "RET PROTEGIDO >=120MM", LV_], ["62000", "RET CABO NU <=2/0", LV_]]],
+    ["Conexões", [["60041", "ESTRIBO", LV_], ["64081", "GLV", LV_], ["68008", "COMPRESSÃO", LV_], ["68009", "CUNHA", LV_], ["62086", "JUMPER", LV_],
+      ["64105", "FLYING PROTEGIDO", LV_], ["64151", "FLYING NU", LV_], ["62154", "CONECT BYPASS", LV_], ["62155", "DESCONECT BYPASS", LV_]]],
+    ["Estruturas MT", [["62185", "CE1", LV_], ["62187", "CE2", LV_], ["62191", "CE3", LV_], ["62196", "CE4", LV_],
+      ["60061", "B1/N1", LV_], ["60070", "B2/N2", LV_], ["60082", "B3/N3", LV_], ["60098", "B4/N4", LV_], ["64074", "LOSANGULAR", LV_]]],
+    ["Cruzetas", [["64199", "1N/1B", LV_], ["64203", "2N/2B", LV_]]],
+    ["Chaves e para-raios", [["62214", "CF FACA", LV_], ["60140", "FS FUSÍVEL", LV_], ["62031", "CARTUCHO", LV_], ["62252", "PRMT", LV_]]],
+    ["Equipamentos", [["64017", "TP", LV_]]],
+    ["Isoladores", [["62042", "ISO POLIMÉRICO", LV_], ["62092", "ISO PILAR", LV_], ["60039", "ISO BASTÃO", LV_]]],
+    ["Poste", [["62311", "POSTE", LV_], ["60310", "CON ELEVAÇÃO", LV_]]],
+    ["Outros", [["68049", "COBERTURA", LV_]]],
+  ];
+  // nome curto: só nos botões da lista (nos lançados, no PDF e na planilha vai a descrição do contrato)
+  const NOME_CURTO = new Map([...RAPIDOS, ...RAPIDOS_LV].flatMap(([, itens]) => itens.map(([cod, rot, dep = DEP_RAPIDOS]) => [`${dep}|${cod}`, rot])));
   const nomeNaTela = (i) => NOME_CURTO.get(`${i.departamento}|${i.codigo}`) || i.descricao;
 
+  // qual lista pré-definida está na tela: LM ou LV (fica guardado no aparelho)
+  let depRapidos = "LM";
+  try { depRapidos = localStorage.getItem("croqui_rapidos") === "LV" ? "LV" : "LM"; } catch (e) { /* sem guardar */ }
+
   function rapidosHtml(p) {
-    return RAPIDOS.map(([grupo, itens]) => `<div class="rapidos-grupo">
+    const lista = depRapidos === "LV" ? RAPIDOS_LV : RAPIDOS;
+    return `<div class="dep-rapidos" role="group" aria-label="Lista pré-definida">
+        ${["LM", "LV"].map((d) => `<button type="button" class="dep-rapido${d === depRapidos ? " ativo" : ""}" data-acao="dep-rapidos" data-dep="${d}" aria-pressed="${d === depRapidos}">${d}</button>`).join("")}
+      </div>` + lista.map(([grupo, itens]) => `<div class="rapidos-grupo">
       <small class="cat">${esc(grupo)}</small>
       <div class="rapidos">${itens.map(([cod, rot, dep = DEP_RAPIDOS]) => {
         const lancados = p.itens.filter((i) => i.codigo === cod && i.departamento === dep);
@@ -1177,6 +1202,8 @@
     return lidosProjeto.get(k);
   }
 
+  const chaveSug = (x) => `${x.op}|${x.rotulo}`;
+
   function doProjetoHtml(o, p) {
     if (p.geral || !p.croqui || !o.projeto || soLeitura(o)) return "";
     const r = doProjeto(o, p);
@@ -1196,19 +1223,25 @@
     }
     // o que já foi lançado (em LM ou LV, com o mesmo tipo) sai da sugestão
     const lancado = (g, op) => p.itens.some((i) => i.codigo === g.codigo && i.departamento === g.departamento && (!op || i.operacao === op));
-    const faltam = s.lista.filter((x) => !x.cands.some((g) => lancado(g, x.op)));
+    const pendentes = s.lista.filter((x) => !x.cands.some((g) => lancado(g, x.op)));
+    // o supervisor pode ocultar a sugestão que não vai usar (fica guardado no ponto)
+    const ocultas = new Set(p.sugOcultas || []);
+    const faltam = pendentes.filter((x) => !ocultas.has(chaveSug(x)));
+    const nOcultas = pendentes.length - faltam.length;
     const linhas = faltam.map((x) => `<div class="sug">
-        <div class="sug-topo">${x.op ? `<span class="sug-op sug-${x.op.toLowerCase()}">${ROTULO[x.op]}</span>` : ""}<b>${x.qtd ? `${esc(x.qtd)} × ` : ""}${esc(x.rotulo)}</b></div>
+        <div class="sug-topo">${x.op ? `<span class="sug-op sug-${x.op.toLowerCase()}">${ROTULO[x.op]}</span>` : ""}<b>${x.qtd ? `${esc(x.qtd)} × ` : ""}${esc(x.rotulo)}</b>
+          <button type="button" class="sug-ocultar" data-acao="sug-ocultar" data-chave="${esc(chaveSug(x))}" aria-label="Ocultar esta sugestão" title="Ocultar esta sugestão">×</button></div>
         <div class="sug-cands">${x.cands.map((g) => `<button type="button" class="sug-cand" data-acao="sugestao" data-chave="${esc(g.chave)}" data-qtd="${esc(x.qtd)}" data-op="${x.op}">
             <b>${esc(g.codigo)}</b> ${esc(g.descricao)} <i class="sigla sigla-${esc(sigla(g.departamento).replace("&", "").toLowerCase())}">${esc(sigla(g.departamento))}</i></button>`).join("")}</div>
       </div>`).join("");
-    const feitos = s.lista.length - faltam.length;
+    const feitos = s.lista.length - pendentes.length;
     return `<section class="cartao do-projeto" id="do-projeto">
       ${topo()}
       ${s.operativo ? `<div class="sug-operativo">Nº operativo <b>${esc(s.operativo)}</b></div>` : ""}
       ${linhas ? `<small class="sub">Toque no serviço para conferir a quantidade e lançar o que foi feito.</small>${linhas}`
-        : s.lista.length ? `<small class="sub">✓ Tudo o que o projeto pede neste poste já foi lançado.</small>` : ""}
+        : s.lista.length && !nOcultas ? `<small class="sub">✓ Tudo o que o projeto pede neste poste já foi lançado.</small>` : ""}
       ${linhas && feitos ? `<small class="sub">✓ ${plural(feitos, "sugestão já lançada", "sugestões já lançadas")}.</small>` : ""}
+      ${nOcultas ? `<small class="sub">${plural(nOcultas, "sugestão oculta", "sugestões ocultas")} · <button type="button" class="link" data-acao="sug-mostrar">Mostrar</button></small>` : ""}
       ${s.outros.length ? `<small class="sub sug-outros">Também escrito no projeto: ${s.outros.map(esc).join(" · ")}</small>` : ""}
     </section>`;
   }
@@ -1244,8 +1277,8 @@
       return `<section class="bloco">
         <h2 class="secao secao-${op.toLowerCase()}"><span>${SECAO[op]} · ${itens.length < todos.length ? `${itens.length} de ${todos.length}` : todos.length}</span><span>${M.fmtMoeda(M.soma(todos, M.valorItem))}</span></h2>
         ${porCategoria(itens, (i) => `<div class="cartao item item-linha">
-          <div class="item-nome" title="${esc(i.descricao)}"><b>${esc(nomeNaTela(i))}</b><small>${esc(i.codigo)}</small></div>
-          ${campoQtd(i.quantidade, `data-qtd-item="${i.sid}" aria-label="Quantidade de ${esc(nomeNaTela(i))}"`)}
+          <div class="item-nome"><b>${esc(i.descricao)}</b><small>${esc(i.codigo)}</small></div>
+          ${campoQtd(i.quantidade, `data-qtd-item="${i.sid}" aria-label="Quantidade de ${esc(i.descricao)}"`)}
           <b class="item-valor" id="valor-${i.sid}">${M.fmtMoeda(M.valorItem(i))}</b>
           <button type="button" class="remover" data-acao="remover-item" data-sid="${i.sid}" aria-label="Remover">×</button>
         </div>`)}
@@ -2225,6 +2258,21 @@
         estado.qtd = alvo.dataset.qtd || "";
         return render();
       }
+      case "sug-ocultar": // sugestão do projeto que o supervisor não vai usar
+      case "sug-mostrar": {
+        const p = ponto();
+        if (!p) return;
+        p.sugOcultas = alvo.dataset.acao === "sug-mostrar" ? [] : [...new Set([...(p.sugOcultas || []), alvo.dataset.chave])];
+        salvarAgora();
+        // só troca o cartão: refazer a tela tiraria o lugar da rolagem
+        const el = document.getElementById("do-projeto");
+        if (el) el.outerHTML = doProjetoHtml(o, p);
+        return;
+      }
+      case "dep-rapidos": // lista pré-definida da LM ou da LV
+        depRapidos = alvo.dataset.dep === "LV" ? "LV" : "LM";
+        try { localStorage.setItem("croqui_rapidos", depRapidos); } catch (e) { /* sem guardar */ }
+        return render();
       case "rapido": {
         const g = grupos().find((x) => x.chave === alvo.dataset.chave);
         if (!g) return avisar("Esse código não está no catálogo baixado.", "erro");

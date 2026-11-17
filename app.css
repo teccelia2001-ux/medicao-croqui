@@ -989,3 +989,11 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 /* linha fina do ponto até o nome, quando o nome teve de se afastar para achar um branco */
 .cq-guia { position: absolute; left: 0; top: 0; height: 1.5px; margin-top: -0.75px; transform-origin: 0 50%; background: var(--cor, #ea580c); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8); pointer-events: none; }
 .cq-guia[hidden] { display: none; }
+
+/* lista pré-definida: LM ou LV */
+.dep-rapidos { display: flex; gap: 8px; margin: 2px 0 4px; }
+.dep-rapido { flex: 1; min-height: 40px; border: 1.5px solid var(--borda); border-radius: 10px; background: #fff; font: inherit; font-weight: 800; color: var(--suave); cursor: pointer; }
+.dep-rapido.ativo { border-color: transparent; background: #dbeafe; color: #1e40af; }
+.dep-rapido.ativo[data-dep="LV"] { background: #fae8ff; color: #86198f; }
+.sug-topo b { flex: 1; }
+.sug-ocultar { flex: none; width: 28px; height: 28px; border: 0; border-radius: 8px; background: #f1f5f9; color: var(--suave); font-size: 17px; line-height: 1; cursor: pointer; }
