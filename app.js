@@ -77,6 +77,7 @@
     clearTimeout(tempoSalvar);
     // obra nova só existe depois do botão "Criar obra"
     if (!estado.obra || soLeitura(estado.obra) || !estado.obra.criada_em) return;
+    if ((await obrasExcluidas()).has(estado.obra.id)) return;
     try {
       estado.obra.dono = true;
       await Banco.salvarObra(estado.obra);
@@ -154,6 +155,20 @@
     clearTimeout(tempoEnvio);
     tempoEnvio = setTimeout(enviarPendentes, ms);
   }
+  /** Obras excluídas neste aparelho (guardado para sempre, até 1000): nada as grava ou
+   *  envia de novo — nem a análise do projeto que ainda estava rodando, nem outra cópia que
+   *  apareça no banco (ela é apagada de novo). */
+  let excluidas = null;
+  async function obrasExcluidas() {
+    if (!excluidas) excluidas = new Set(await Banco.ler("excluidas", []));
+    return excluidas;
+  }
+  async function marcarExcluida(id) {
+    const ex = await obrasExcluidas();
+    ex.add(id);
+    await Banco.gravar("excluidas", [...ex].slice(-1000));
+  }
+
   /** Manda ao banco as obras alteradas e as exclusões guardadas. Sem sinal, espera. */
   async function enviarPendentes() {
     clearTimeout(tempoEnvio);
@@ -175,7 +190,8 @@
         }
       }
       const meu = estado.perfil?.user_id;
-      const obras = (await Banco.listarObras()).filter((o) => o.pendente && o.dono !== false && o.criada_em && (!o.dono_id || o.dono_id === meu));
+      const ex = await obrasExcluidas();
+      const obras = (await Banco.listarObras()).filter((o) => o.pendente && o.dono !== false && o.criada_em && (!o.dono_id || o.dono_id === meu) && !ex.has(o.id));
       for (const o of obras) {
         try {
           await Nuvem.enviarObra(o, M.totaisObra(o));
@@ -226,9 +242,30 @@
     try {
       // obra excluída que ainda não saiu do banco (sem sinal na hora) não volta para a lista
       const saindo = new Set(await Banco.ler("exclusoes", []));
-      const lista = (await Nuvem.listarObras()).filter((r) => !saindo.has(r.id));
+      const ex = await obrasExcluidas();
+      const pedidaEm = Date.now();
+      const tudo = await Nuvem.listarObras();
+      // excluída aqui que reapareceu no banco (outra cópia subiu depois): apaga de novo
+      const voltaram = tudo.filter((r) => ex.has(r.id) && !saindo.has(r.id) && r.supervisor_id === estado.perfil?.user_id);
+      if (voltaram.length) {
+        const exclusoes = await Banco.ler("exclusoes", []);
+        voltaram.forEach((r) => { if (!exclusoes.includes(r.id)) exclusoes.push(r.id); });
+        await Banco.gravar("exclusoes", exclusoes);
+        enviarDepois(500);
+      }
+      const lista = tudo.filter((r) => !saindo.has(r.id) && !ex.has(r.id));
       estado.remotas = lista;
       estado.remotasEm = Date.now();
+      // obra que já estava no banco e sumiu de lá (excluída em outro aparelho): sai deste
+      // também. Só a que não tem nada para enviar, e só com a lista inteira em mãos
+      if (tudo.length < 500) {
+        const noBanco = new Set(tudo.map((r) => r.id));
+        for (const o of await Banco.listarObras()) {
+          // no banco desde antes de pedir a lista (a que acabou de subir pode ainda não constar)
+          const antiga = o.enviada_em && new Date(o.enviada_em).getTime() < pedidaEm - 60000;
+          if (!o.pendente && antiga && !noBanco.has(o.id) && estado.obra?.id !== o.id) await Banco.excluirObra(o.id);
+        }
+      }
       // obra parada no aparelho e mais nova no banco: traz a versão do banco
       for (const r of lista) {
         const local = await Banco.obterObra(r.id);
@@ -489,6 +526,7 @@
   async function excluirObra(id, numero, pontos) {
     if (!confirm(`Excluir a obra ${numero}? Pontos e serviços serão apagados deste celular e do banco, e não dá para desfazer. As fotos continuam guardadas no celular e no banco.`)) return false;
     if (pontos && !confirm(`Tem certeza? A obra ${numero} tem ${plural(pontos, "ponto", "pontos")}. Se ainda não gerou a medição, os serviços lançados serão perdidos.`)) return false;
+    await marcarExcluida(id);
     await Banco.excluirObra(id);
     // sempre entra na fila: além de tirar a obra do banco, sobe as fotos que faltam
     const exclusoes = await Banco.ler("exclusoes", []);
@@ -734,9 +772,13 @@
       if (!proj) throw new Error("O projeto não está neste celular.");
       const pags = await Croqui.paginas(proj);
       const achados = [];
+      const excluida = async () => (await obrasExcluidas()).has(obra.id);
       for (let pag = 1; pag <= pags; pag++) {
+        if (await excluida()) throw new Error("A obra foi excluída.");
         achados.push(...(await Croqui.acharPontos(proj, pag, (f, t) => { Object.assign(a, { feitos: f, total: t, pag, pags }); mostrarAnalise(); })));
       }
+      // excluída enquanto lia: não grava a obra de novo (ela voltaria para a lista e o banco)
+      if (await excluida()) throw new Error("A obra foi excluída.");
       a.achados = achados.length;
       // a obra pode ter sido recarregada no meio: trabalha na que está valendo
       const o = estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra;
@@ -763,6 +805,7 @@
       Object.assign(a, { fase: "servicos", feitos: 0, total: comLugar.length });
       mostrarAnalise();
       for (const p of comLugar) {
+        if (await excluida()) break;
         await lerSugestoes(o, p.croqui, p.nome);
         a.feitos++;
         mostrarAnalise();
