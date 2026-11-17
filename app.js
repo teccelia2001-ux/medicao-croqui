@@ -577,7 +577,7 @@
       ${topo(nova ? "Nova obra" : "Dados da obra", nova ? "inicio" : "obra")}
       <section class="cartao dados">
         <label class="campo">Número da obra
-          <input id="f-numero" value="${esc(o.numero)}" inputMode="numeric" maxlength="10" placeholder="8 ou 10 dígitos" class="${!o.numero ? "" : obraValida(o.numero) ? "valido" : "invalido"}">
+          <input id="f-numero" value="${esc(o.numero)}" autocomplete="off" inputMode="numeric" maxlength="10" placeholder="8 ou 10 dígitos" class="${!o.numero ? "" : obraValida(o.numero) ? "valido" : "invalido"}">
           <small class="dica-erro" id="dica-numero">${o.numero && !obraValida(o.numero) ? `Tem ${o.numero.length} dígitos. Precisa de 8 ou 10.` : ""}</small>
         </label>
         <label class="campo"><span>Cidade <small>(se tiver)</small></span>
@@ -999,7 +999,7 @@
 
   function campoQtd(valor, attrs, grande = false) {
     return `<div class="setas${grande ? " setas-grande" : ""}">
-      <input inputmode="decimal" value="${esc(valor)}" placeholder="0" ${attrs}>
+      <input inputmode="decimal" value="${esc(valor)}" placeholder="0" autocomplete="off" ${attrs}>
       <div><button type="button" aria-label="Aumentar" data-passo="1">▲</button><button type="button" aria-label="Diminuir" data-passo="-1">▼</button></div>
     </div>`;
   }
@@ -1320,7 +1320,7 @@
       <fieldset class="conjunto" ${soLeitura(o) ? "disabled" : ""}>
       <section class="cartao dados">
         ${p.geral ? `<p class="faixa faixa-geral">🧰 <b>Serviços da obra, sem ponto.</b> O que for lançado aqui soma no total da obra e sai na medição como <b>SERVIÇOS GERAIS</b>.</p>` : `<label class="campo">Ponto
-          <input id="p-nome" value="${esc(p.nome)}" placeholder="P1" autocapitalize="characters">
+          <input id="p-nome" value="${esc(p.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off">
         </label>`}
         <label class="campo"><span>Observação <small>(se tiver)</small></span>
           <textarea id="p-obs" rows="2" placeholder="${p.geral ? "Ex.: serviços do trecho todo" : "Ex.: poste novo 11/300, troca de cruzeta"}">${esc(p.obs)}</textarea>
