@@ -1076,6 +1076,10 @@
     return junto.slice(0, 6);
   }
 
+  /** Quantidade de chave (faca ou fusível) num poste não passa de 9: um "1" na frente é a
+   *  borda da caixa que o OCR leu ("13 - 100A - 5H" é 3). */
+  const semBorda = (q) => (/^1[1-9]$/.test(q) ? q.slice(1) : q);
+
   /** { operativo, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
   function sugestoesDoProjeto(lido) {
     const deps = [LM, LV];
@@ -1104,7 +1108,7 @@
       }
       // 2-100A-0,5H: chave fusível (2 = quantidade, 100 A, elo 0,5H)
       const fus = /\b(\d{1,2})\s?-\s?(\d{2,3})\s?A\s?[-:]?\s?(\d+(?:[,.]\d+)?)\s?([HKT])\b/.exec(t); // (o OCR troca o traço por ":")
-      if (fus) por(`Chave fusível ${fus[2]} A - ${fus[3]}${fus[4]}`, fus[1], (d) => /^CHAVE FUSIVEL <=/.test(d));
+      if (fus) por(`Chave fusível ${fus[2]} A - ${fus[3]}${fus[4]}`, semBorda(fus[1]), (d) => /^CHAVE FUSIVEL <=/.test(d));
       // estruturas: 1-B4, 2-CE4; cruzeta limpa: 1-2B (2N/2M/2B), 1-1B
       for (const m of t.matchAll(/\b(\d{1,2})\s?-\s?([A-Z0-9]{2,4})\b/g)) {
         const cruzeta = /^([12])([NMB])E?$/.exec(m[2]);
@@ -1120,7 +1124,7 @@
       // 9CF - 400 A: chave faca (por fase)
       // (o número às vezes sai como letra, "SCF": aí fica sem quantidade, para digitar)
       const cf = /(?:^|[^A-Z0-9])([0-9OS]{0,2})\s?CF\b/.exec(t);
-      if (cf) por(`Chave faca${/400\s?A/.test(t) ? " 400 A" : ""}`, /^\d+$/.test(cf[1]) ? cf[1] : "", (d) => /^CHAVE FACA/.test(d));
+      if (cf) por(`Chave faca${/400\s?A/.test(t) ? " 400 A" : ""}`, /^\d+$/.test(cf[1]) ? semBorda(cf[1]) : "", (d) => /^CHAVE FACA/.test(d));
       for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
       if (lista.length === antes && !mp && !cf && !fus) outros.push(l.texto);
     }

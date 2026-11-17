@@ -935,9 +935,10 @@
     return naFila(() => lerProjetoAgora(proj, pos));
   }
 
-  /** Quantidade antes de "CF" (9CF = 9 chaves faca) que o OCR leu como letra ("OCF"):
-   *  relê só aquela caixa, aceitando só números, C, F e traço. */
-  async function relerQuantidade(w, cv, b) {
+  /** Quantidade que o OCR leu errado por causa da caixa: "OCF" (9CF = 9 chaves faca) ou
+   *  "13 - 100A - 5H" (a borda virou "1" na frente do 3). Relê só aquela caixa, sem a
+   *  borda, aceitando só os caracteres de `lista`; `re` tira a quantidade do texto lido. */
+  async function relerQuantidade(w, cv, b, lista = "0123456789CF-", re = /(\d{1,2})C?F/) {
     const pad = Math.round((b.y1 - b.y0) * 0.3);
     const x0 = Math.max(0, b.x0 - pad), y0 = Math.max(0, b.y0 - pad);
     const W = Math.min(cv.width, b.x1 + pad) - x0, H = Math.min(cv.height, b.y1 + pad) - y0;
@@ -960,10 +961,11 @@
       }
     }
     ctx.putImageData(d, 0, 0);
-    await w.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789CF-" });
+    await w.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: lista });
     try {
       const { data } = await w.recognize(c);
-      const m = /(\d{1,2})C?F/.exec(data.text.replace(/\s+/g, ""));
+      const m = re.exec(data.text.replace(/\s+/g, ""));
+      if (window.CROQUI_DEPURAR) (window.CROQUI_RELER = window.CROQUI_RELER || []).push({ texto: data.text, img: c.toDataURL() });
       return m ? m[1] : "";
     } finally {
       await w.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
@@ -1074,6 +1076,14 @@
       if (k < 0 || /^\d{1,2}CF/.test(l.palavras[k].texto) || (k > 0 && /^\d{1,2}$/.test(l.palavras[k - 1].texto))) continue;
       const n = await relerQuantidade(w, verm.cv, l.bbox);
       if (n) l.palavras[k] = { ...l.palavras[k], texto: l.palavras[k].texto.replace(/^[^C]*CF/, `${n}CF`) };
+    }
+    // chave fusível "3 - 100A - 5H": a borda da caixa vira "1" na frente da quantidade (13)
+    for (const l of linhasVerm) {
+      const t = l.palavras.map((p) => p.texto).join(" ");
+      if (!/\d{1,3}\s?-\s?\d{2,3}\s?A/.test(t)) continue;
+      const n = await relerQuantidade(w, verm.cv, l.bbox, "0123456789-A,H", /(?:^|-)(\d{1,2})-\d{2,3}A/);
+      const k = l.palavras.findIndex((p) => /\d/.test(p.texto));
+      if (n && k >= 0) l.palavras[k] = { ...l.palavras[k], texto: l.palavras[k].texto.replace(/^\D*\d{1,3}/, n) };
     }
 
     // rótulos dos postes (F.P2) e o "(P1)" verde de cada um, que as notas usam: na mesma
