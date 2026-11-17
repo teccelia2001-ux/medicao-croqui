@@ -593,12 +593,6 @@
         <button type="button" class="botao botao-perigo" data-acao="sair">Sair da conta</button>
       </section>
       <section class="cartao dados">
-        <b>Sugestão dos serviços</b>
-        <label class="chave-linha"><input type="checkbox" data-acao="sugestao-servicos" ${sugestaoLigada() ? "checked" : ""}>
-          <span>Sugerir os serviços lidos no projeto <small>(cartão "📐 No projeto" no ponto)</small></span></label>
-        <p class="sub">Desligada, o app não lê os serviços do croqui e não mostra as sugestões; os pontos (P) continuam sendo achados e você lança tudo pela busca.</p>
-      </section>
-      <section class="cartao dados">
         <b>Fotos</b>
         ${ehIos()
           ? `<p class="sub">No iPhone o app não consegue salvar sozinho na galeria. No ponto, toque em <b>💾 Salvar as fotos no celular</b> e escolha <b>Salvar imagens</b>.</p>`
@@ -1783,11 +1777,10 @@
   const copiaLigada = () => {
     try { return localStorage.getItem("croqui_copia_fotos") !== "nao"; } catch (e) { return true; }
   };
-  /** Sugestão dos serviços pelo projeto (Ajustes). Desligada: não lê os serviços no croqui
-   *  nem mostra o "No projeto"; achar os pontos (P) continua. Vale para este aparelho. */
-  const sugestaoLigada = () => {
-    try { return localStorage.getItem("croqui_sugestao") !== "nao"; } catch (e) { return true; }
-  };
+  /** Sugestão dos serviços pelo projeto: TIRADA a pedido do supervisor (17/11/2026). O croqui
+   *  só lê o (P) de cada poste; os serviços são lançados pela lista e pela busca. O código da
+   *  leitura dos serviços fica guardado: para voltar, é só esta função devolver true. */
+  const sugestaoLigada = () => false;
   const doisDig = (n) => String(n).padStart(2, "0");
   function nomeFoto(o, p, iso, k = 0) {
     const d = new Date(iso);
@@ -2703,10 +2696,6 @@
       const arquivos = [...t.files];
       t.value = "";
       return receberFotos(arquivos, t.dataset.origem || "galeria");
-    }
-    if (t.dataset.acao === "sugestao-servicos") {
-      try { localStorage.setItem("croqui_sugestao", t.checked ? "sim" : "nao"); } catch (err) { /* sem espaço */ }
-      return avisar(t.checked ? "Sugestão dos serviços ligada: o ponto mostra o que o projeto pede." : "Sugestão dos serviços desligada.");
     }
     if (t.dataset.acao === "copia-fotos") {
       try { localStorage.setItem("croqui_copia_fotos", t.checked ? "sim" : "nao"); } catch (err) { /* sem espaço */ }
