@@ -1080,6 +1080,16 @@
    *  borda da caixa que o OCR leu ("13 - 100A - 5H" é 3). */
   const semBorda = (q) => (/^1[1-9]$/.test(q) ? q.slice(1) : q);
 
+  /** a potência cabe na faixa da descrição ("3F > 40 KVA E <= 112,5 KVA", "1F <= 20 KVA")? */
+  function naFaixaKva(d, kva) {
+    const regras = [...d.matchAll(/(<=|>=|<|>)\s*(\d+(?:[,.]\d+)?)\s*KVA/g)];
+    if (!regras.length) return false;
+    return regras.every(([, op, v]) => {
+      const n = Number(v.replace(",", "."));
+      return op === "<=" ? kva <= n : op === "<" ? kva < n : op === ">=" ? kva >= n : kva > n;
+    });
+  }
+
   /** { operativo, lista: [{ rotulo, qtd, op, texto, cands }], outros: [texto] } */
   function sugestoesDoProjeto(lido) {
     const deps = [LM, LV];
@@ -1094,8 +1104,11 @@
       const op = /\bINST/.test(t) ? "INSTALAR" : /\bRET(IRAR|\.)/.test(t) ? "RETIRAR"
         : l.cor === "vermelho" ? "INSTALAR" : l.riscada ? "RETIRAR" : "";
       const antes = lista.length;
+      let repetida = false;
       const por = (rotulo, qtd, filtro, ordem = deps, todos = false) => {
         const cands = candidatos(filtro, ordem, todos);
+        // a mesma sugestão de novo (pedaço da linha lido duas vezes): uma basta
+        if (cands.length && lista.some((x) => x.rotulo === rotulo && x.op === op && x.qtd === qtd)) { repetida = true; return; }
         if (cands.length) lista.push({ rotulo, qtd, op, texto: l.texto, cands });
         else outros.push(rotulo);
       };
@@ -1125,8 +1138,14 @@
       // (o número às vezes sai como letra, "SCF": aí fica sem quantidade, para digitar)
       const cf = /(?:^|[^A-Z0-9])([0-9OS]{0,2})\s?CF\b/.exec(t);
       if (cf) por(`Chave faca${/400\s?A/.test(t) ? " 400 A" : ""}`, /^\d+$/.test(cf[1]) ? semBorda(cf[1]) : "", (d) => /^CHAVE FACA/.test(d));
+      // TR - 3 - 112KVA: transformador, trifásico (3), potência (kVA) → faixa do catálogo
+      const tr = /\bTR\s?-?\s?([123])\s?-?\s?(\d+(?:[,.]\d+)?)\s?KVA\b/.exec(t);
+      if (tr) {
+        const kva = Number(tr[2].replace(",", "."));
+        por(`Transformador ${tr[1]}F ${tr[2]} kVA`, "1", (d) => d.startsWith(`TRANSFORMADOR DISTRIBUICAO ${tr[1]}F`) && naFaixaKva(d, kva));
+      }
       for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
-      if (lista.length === antes && !mp && !cf && !fus) outros.push(l.texto);
+      if (lista.length === antes && !repetida && !mp && !cf && !fus && !tr) outros.push(l.texto);
     }
     return { operativo, lista, outros: [...new Set(outros)] };
   }
