@@ -257,16 +257,29 @@
   }
 
   // ------------------------------------------------------------------ render
+  // tela que estava desenhada: refazendo a mesma (lançou um serviço, abriu a quantidade...)
+  // a rolagem fica onde estava, na página e em cada coluna (no computador cada uma rola sozinha)
+  let desenhada = { tela: null, ponto: null };
+  const ROLAM = ".ponto-col, .medicao-col";
+
   function render() {
     const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao, config: telaConfig };
+    const mesma = desenhada.tela === estado.tela && desenhada.ponto === estado.pontoId;
+    const colunas = mesma ? [...$app.querySelectorAll(ROLAM)].map((c) => c.scrollTop) : null;
+    const pagina = window.scrollY;
     $app.innerHTML = telas[estado.tela]();
+    if (colunas) {
+      $app.querySelectorAll(ROLAM).forEach((c, i) => { if (colunas[i]) c.scrollTop = colunas[i]; });
+      if (window.scrollY !== pagina) window.scrollTo(0, pagina);
+    }
+    desenhada = { tela: estado.tela, ponto: estado.pontoId };
     document.body.classList.toggle("com-croqui", estado.tela === "croqui");
     if (estado.tela === "croqui") montarCroqui();
     if (estado.tela === "ponto") {
       const p = ponto();
       if (p) carregarMiniaturas(p.fotos);
       // na mesma hora do toque: assim o celular abre o teclado
-      if (estado.escolhido) document.getElementById("qtd-folha")?.focus();
+      if (estado.escolhido) document.getElementById("qtd-folha")?.focus({ preventScroll: true });
       if (estado.foto) ligarVisor();
     }
   }
