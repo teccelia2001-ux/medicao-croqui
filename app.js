@@ -886,6 +886,8 @@
     }
     n.lendo = false;
     n.lido = achou?.texto || "";
+    // já emenda a leitura dos serviços deste lugar: ao criar o ponto as sugestões estão prontas
+    if (o?.projeto && !soLeitura(o)) lerSugestoes(o, { pag: n.pag, x: n.x, y: n.y }, achou?.nome || n.nome);
     if (estado.cqNovo !== n || estado.obra !== o) return;
     if (achou && !n.editado) n.nome = achou.nome;
     // digitando: não refaz a tela (o teclado fecharia), só troca o aviso
@@ -1208,9 +1210,10 @@
 
   // leitura feita uma vez por lugar do ponto e guardada no aparelho: abrir o ponto de novo
   // (até em outro dia) não lê o projeto outra vez. Mudou o leitor → sobe LEITURA e lê de novo.
-  const LEITURA = 22;
+  const LEITURA = 23;
   const lidosProjeto = new Map();
-  const chaveLido = (o, p) => `${LEITURA}|${o.id}|${o.projeto?.em}|${p.croqui.pag || 1}|${p.croqui.x}|${p.croqui.y}|${p.nome}`;
+  // pelo lugar (pode começar no toque do croqui, antes de o ponto existir)
+  const chaveLido = (o, croqui) => `${LEITURA}|${o.id}|${o.projeto?.em}|${croqui.pag || 1}|${croqui.x}|${croqui.y}`;
   let guardadosProjeto = null;
   const lidosGuardados = () => (guardadosProjeto = guardadosProjeto || Banco.ler("lidos_projeto", {}).then((g) => g || {}).catch(() => ({})));
   async function guardarLido(k, lido) {
@@ -1221,34 +1224,38 @@
     if (ks.length > 300) ks.sort((a, b) => g[a].em - g[b].em).slice(0, ks.length - 300).forEach((x) => delete g[x]);
     Banco.gravar("lidos_projeto", g).catch(() => {});
   }
-  function doProjeto(o, p) {
-    const k = chaveLido(o, p);
-    if (!lidosProjeto.has(k)) {
-      lidosProjeto.set(k, { lendo: true });
-      (async () => {
-        let r = { erro: true };
-        try {
-          const guardado = (await lidosGuardados())[k];
-          if (guardado) r = { lido: guardado.lido };
-          else {
-            const proj = await garantirProjeto(o);
-            // o nome do ponto (P2) ajuda a achar o "(P2)" do projeto quando o OCR não lê ele
-            const lido = proj && await Croqui.lerProjeto(proj, p.croqui, (p.nome || "").trim().toUpperCase());
-            r = { lido };
-            if (proj) guardarLido(k, lido || null);
-          }
-        } catch (e) {
-          console.warn("leitura do projeto:", e);
+  /** Lê no projeto os serviços do lugar `croqui` (uma vez só por lugar). Começa já no toque
+   *  do croqui, junto com o nome do poste: ao abrir o ponto as sugestões estão prontas. */
+  function lerSugestoes(o, croqui, nome) {
+    const k = chaveLido(o, croqui);
+    if (lidosProjeto.has(k)) return;
+    lidosProjeto.set(k, { lendo: true });
+    (async () => {
+      let r = { erro: true };
+      try {
+        const guardado = (await lidosGuardados())[k];
+        if (guardado) r = { lido: guardado.lido };
+        else {
+          const proj = await garantirProjeto(o);
+          // o nome do ponto (P2) ajuda a achar o "(P2)" do projeto quando o OCR não lê ele
+          const lido = proj && await Croqui.lerProjeto(proj, croqui, (nome || "").trim().toUpperCase());
+          r = { lido };
+          if (proj) guardarLido(k, lido || null);
         }
-        lidosProjeto.set(k, r);
-        // só troca o cartão: refazer a tela fecharia o teclado de quem está digitando
-        const el = document.getElementById("do-projeto");
-        // pelo id: a obra pode ter sido recarregada do banco no meio da leitura (objetos novos)
-        const atual = estado.tela === "ponto" ? ponto() : null;
-        if (el && atual && atual.id === p.id && estado.obra) el.outerHTML = doProjetoHtml(estado.obra, atual);
-      })();
-    }
-    return lidosProjeto.get(k);
+      } catch (e) {
+        console.warn("leitura do projeto:", e);
+      }
+      lidosProjeto.set(k, r);
+      // o ponto deste lugar está aberto: só troca o cartão (refazer a tela fecharia o
+      // teclado de quem está digitando). Pelo lugar: a obra pode ter sido recarregada.
+      const el = document.getElementById("do-projeto");
+      const atual = estado.tela === "ponto" ? ponto() : null;
+      if (el && atual?.croqui && estado.obra && chaveLido(estado.obra, atual.croqui) === k) el.outerHTML = doProjetoHtml(estado.obra, atual);
+    })();
+  }
+  function doProjeto(o, p) {
+    lerSugestoes(o, p.croqui, p.nome);
+    return lidosProjeto.get(chaveLido(o, p.croqui));
   }
 
   const chaveSug = (x) => `${x.op}|${x.rotulo}`;
