@@ -905,7 +905,7 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
   background: #fff;
   box-shadow: 0 -6px 24px rgba(15, 23, 42, 0.18);
 }
-.cq-barra { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; }
+.cq-barra { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; }
 .cq-barra .rodape-total { flex-direction: column; margin: 0 !important; gap: 0; }
 .cq-barra .rodape-total span { font-size: 12px; color: var(--suave); }
 .cq-barra .botao { min-height: 46px; padding: 0 18px; }
@@ -1017,3 +1017,38 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-analise { background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a; }
 .cq-folhas span { display: flex; flex-direction: column; align-items: center; line-height: 1.1; padding: 0 4px; }
 .cq-folhas span small { font-size: 11px; font-weight: 600; color: var(--suave); }
+
+/* vãos, anotações e rascunho do campo, por cima do projeto */
+.cq-camada { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.cq-vao-linha { stroke: #7c3aed; stroke-width: 3; stroke-dasharray: 7 5; stroke-linecap: round; opacity: 0.85; }
+.cq-vao-sel { stroke: var(--vermelho); stroke-width: 4; }
+.cq-traco { fill: none; stroke: #1d4ed8; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 1.5px #fff); }
+.cq-traco-vivo { stroke-width: 4; }
+.cq-visor.cq-desenhando { cursor: crosshair; }
+/* vão: losango no meio do vão e a metragem */
+.cq-vao { --cor: #7c3aed; }
+.cq-vao.cq-com { --cor: #6d28d9; }
+.cq-vao i { width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 3px; transform: rotate(45deg); border-width: 3px; background: #fff; }
+.cq-vao span { font-size: 12px; padding: 2px 6px; }
+/* anotação do campo: azul, com o texto quebrando em linhas */
+.cq-nota { --cor: #1d4ed8; }
+.cq-nota i { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-width: 0; background: var(--cor); box-shadow: 0 0 0 2px #fff; }
+.cq-nota span { width: max-content; max-width: 190px; white-space: normal; font-size: 12px; font-weight: 700; line-height: 1.25; background: #eff6ff; color: #1d4ed8; border: 1.5px solid #1d4ed8; box-shadow: 0 1px 4px rgba(29, 78, 216, 0.3); }
+.cq-nota .cq-guia { background: #1d4ed8; }
+.cq-nota-sel span { background: #1d4ed8; color: #fff; }
+.cq-lapis.ativo { background: #1d4ed8 !important; color: #fff; }
+.cq-dica-rascunho { background: #1d4ed8; pointer-events: auto; }
+.cq-dica-rascunho .link { padding: 2px 6px; color: #fff; text-decoration: underline; font-size: 14px; font-weight: 700; }
+.cq-outros { display: flex; flex-wrap: wrap; gap: 8px; }
+.cq-outros .botao { flex: 1 1 140px; width: auto; min-height: 42px; padding: 6px 12px; }
+.botao-vao { background: #7c3aed; }
+.botao-vao small { font-weight: 600; opacity: 0.85; }
+.botao-nota { color: #1d4ed8; border-color: #bfdbfe; }
+.botao-croqui { min-height: 46px; padding: 0 12px !important; white-space: nowrap; }
+.faixa-vao { margin: 0; background: #f5f3ff; color: #5b21b6; line-height: 1.4; }
+.vao-campos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.vao-servicos { display: flex; flex-direction: column; gap: 8px; border: 1.5px solid #ddd6fe; }
+.rapidos-vao { grid-template-columns: 1fr; }
+.vao-servico { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; }
+.vao-servico small { color: var(--suave); font-weight: 600; }
+.cq-folha-nota textarea { width: 100%; }

@@ -195,6 +195,7 @@
       const el = document.createElement("div");
       el.className = "cq-visor";
       el.innerHTML = `<canvas class="cq-base"></canvas><canvas class="cq-detalhe" hidden></canvas>
+        <svg class="cq-camada" xmlns="http://www.w3.org/2000/svg"><g></g></svg>
         <div class="cq-marcas"></div><div class="cq-alfinete" hidden></div>
         <div class="cq-msg" hidden></div>`;
       this.el = el;
@@ -203,6 +204,9 @@
       this.marcasEl = el.querySelector(".cq-marcas");
       this.alfineteEl = el.querySelector(".cq-alfinete");
       this.msgEl = el.querySelector(".cq-msg");
+      this.camadaEl = el.querySelector(".cq-camada g");
+      this._camada = { linhas: [], tracos: [] }; // vãos e rascunho desta folha
+      this._desenho = null; // modo rascunho: (pontos [[x, y]...] em fração da folha) => {}
       this.s = 1; this.tx = 0; this.ty = 0; this.W = 0; this.H = 0;
       this.sb = 1; // escala da imagem base
       this.det = null; // {s, tx, ty} de quando o detalhe foi desenhado
@@ -265,6 +269,7 @@
         throw e;
       }
       if (pedido !== this._pedido) return;
+      this._desenharCamada();
       this._tinta = mapaTinta(this.base); // onde tem desenho: os nomes dos pontos fogem dele
       this._sNomes = null;
       this.msg("");
@@ -324,6 +329,26 @@
       this._aplicar();
     }
 
+    /** O que vai desenhado por cima do projeto nesta folha (em fração da folha):
+     *  linhas [{ x1, y1, x2, y2, classe }] (vãos) e tracos [{ pts: [[x, y]...], classe }] (rascunho). */
+    camada(dados) {
+      this._camada = { linhas: dados?.linhas || [], tracos: dados?.tracos || [] };
+      this._desenharCamada();
+    }
+    _desenharCamada() {
+      if (!this.W) return;
+      const W = this.W, H = this.H, n = (v) => Math.round(v * 100) / 100;
+      const pts = (lista) => lista.map(([x, y]) => `${n(x * W)},${n(y * H)}`).join(" ");
+      this.camadaEl.innerHTML = this._camada.linhas.map((l) => `<line x1="${n(l.x1 * W)}" y1="${n(l.y1 * H)}" x2="${n(l.x2 * W)}" y2="${n(l.y2 * H)}" class="${esc(l.classe || "")}" vector-effect="non-scaling-stroke"/>`).join("")
+        + this._camada.tracos.map((t) => `<polyline points="${pts(t.pts)}" class="cq-traco ${esc(t.classe || "")}" vector-effect="non-scaling-stroke"/>`).join("");
+    }
+    /** liga o modo rascunho (`aoTerminar` recebe cada traço feito com o dedo) ou desliga (null).
+     *  Um dedo desenha; dois dedos continuam movendo e aproximando o croqui. */
+    desenhar(aoTerminar) {
+      this._desenho = aoTerminar || null;
+      this.el.classList.toggle("cq-desenhando", !!aoTerminar);
+    }
+
     /** pontos marcados nesta folha: [{ id, nome, x, y, classe }] */
     marcas(lista) {
       this.marcasEl.innerHTML = lista.map((m) => `<button type="button" class="cq-marca ${m.classe || ""}" data-id="${esc(m.id)}" data-x="${m.x}" data-y="${m.y}" aria-label="${esc(m.nome)}"><i></i><b class="cq-guia" hidden></b><span>${esc(m.nome)}</span></button>`).join("");
@@ -379,6 +404,11 @@
       this.alfineteEl.hidden = !pos;
       this._posicionarMarcas();
     }
+    /** fração da folha embaixo do ponto da tela, presa na folha (para o rascunho) */
+    _naFolha(cx, cy) {
+      const lim = (v) => Math.max(0, Math.min(1, v));
+      return [Math.round(lim((cx - this.tx) / this.s / this.W) * 1e5) / 1e5, Math.round(lim((cy - this.ty) / this.s / this.H) * 1e5) / 1e5];
+    }
 
     /** fração da folha embaixo do ponto da tela (cx, cy); null se caiu fora da folha */
     paraFolha(cx, cy) {
@@ -426,6 +456,7 @@
 
     _posicionarMarcas() {
       if (!this.W) return;
+      this.camadaEl.setAttribute("transform", `translate(${this.tx} ${this.ty}) scale(${this.s})`);
       this._arrumarNomes();
       for (const b of this.marcasEl.children) {
         const x = this.tx + Number(b.dataset.x) * this.W * this.s;
@@ -494,11 +525,21 @@
         try { el.setPointerCapture(e.pointerId); } catch (err) { /* segue */ }
         const p = { x: e.clientX, y: e.clientY };
         dedos.set(e.pointerId, p);
-        if (dedos.size === 1) {
+        if (dedos.size === 1 && this._desenho) {
+          // rascunho: o dedo desenha (o traço aparece enquanto desenha)
+          toque = null;
+          const r = rel(p);
+          gesto = { tipo: "traco", pts: [this._naFolha(r.x, r.y)], ult: p };
+          this._vivo = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+          this._vivo.setAttribute("class", "cq-traco cq-traco-vivo");
+          this._vivo.setAttribute("vector-effect", "non-scaling-stroke");
+          this.camadaEl.appendChild(this._vivo);
+        } else if (dedos.size === 1) {
           toque = { ...p, t: Date.now(), alvo: e.target.closest(".cq-marca") };
           gesto = comecarArrasto(p);
         } else if (dedos.size === 2) {
           toque = null;
+          if (gesto?.tipo === "traco") { this._vivo?.remove(); this._vivo = null; } // dois dedos: era para mover
           const [a, b] = [...dedos.values()];
           gesto = { tipo: "pinca", d0: dist(a, b) || 1, m0: meio(a, b), s0: this.s, tx0: this.tx, ty0: this.ty };
         }
@@ -507,7 +548,13 @@
         if (!dedos.has(e.pointerId)) return;
         const p = { x: e.clientX, y: e.clientY };
         dedos.set(e.pointerId, p);
-        if (gesto?.tipo === "arrasto" && dedos.size === 1) {
+        if (gesto?.tipo === "traco" && dedos.size === 1) {
+          if (Math.hypot(p.x - gesto.ult.x, p.y - gesto.ult.y) < 3) return;
+          gesto.ult = p;
+          const r = rel(p);
+          gesto.pts.push(this._naFolha(r.x, r.y));
+          this._vivo?.setAttribute("points", gesto.pts.map(([x, y]) => `${x * this.W},${y * this.H}`).join(" "));
+        } else if (gesto?.tipo === "arrasto" && dedos.size === 1) {
           if (toque && Math.hypot(p.x - toque.x, p.y - toque.y) > 9) toque = null;
           if (toque) return; // ainda pode ser um toque
           this.tx = gesto.tx0 + p.x - gesto.x0;
@@ -529,6 +576,15 @@
       const soltar = (e) => {
         if (!dedos.has(e.pointerId)) return;
         dedos.delete(e.pointerId);
+        if (gesto?.tipo === "traco" && !dedos.size) {
+          const pts = gesto.pts;
+          gesto = null;
+          toque = null;
+          this._vivo?.remove();
+          this._vivo = null;
+          if (pts.length >= 2 && e.type === "pointerup") this._desenho?.(pts);
+          return;
+        }
         if (dedos.size === 1) {
           gesto = comecarArrasto([...dedos.values()][0]); // tirou um dedo: segue arrastando com o outro
         } else if (!dedos.size) {
@@ -711,6 +767,154 @@
       }
     }
     return { geral, porPonto };
+  }
+
+  // ------------------------------------------------------------------ croqui anotado (PDF)
+  const AZUL = "#1d4ed8"; // anotações e rascunho do campo
+
+  /** quebra o texto em linhas de até `largura` px na fonte atual do ctx */
+  function quebrarTexto(ctx, texto, largura) {
+    const linhas = [];
+    for (const par of String(texto || "").split(/\n/)) {
+      let atual = "";
+      for (const palavra of par.split(/\s+/).filter(Boolean)) {
+        const tenta = atual ? `${atual} ${palavra}` : palavra;
+        if (ctx.measureText(tenta).width <= largura || !atual) atual = tenta;
+        else { linhas.push(atual); atual = palavra; }
+      }
+      if (atual) linhas.push(atual);
+    }
+    return linhas.length ? linhas : [""];
+  }
+  /** seta saindo de (x1, y1) com a ponta em (x2, y2) */
+  function seta(ctx, x1, y1, x2, y2, cor, larg) {
+    const ang = Math.atan2(y2 - y1, x2 - x1), p = larg * 4.5;
+    ctx.lineCap = "round";
+    for (const [c, l] of [["#fff", larg + 4], [cor, larg]]) {
+      ctx.strokeStyle = c;
+      ctx.fillStyle = c;
+      ctx.lineWidth = l;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2 - Math.cos(ang) * p * 0.6, y2 - Math.sin(ang) * p * 0.6);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - p * Math.cos(ang - 0.42), y2 - p * Math.sin(ang - 0.42));
+      ctx.lineTo(x2 - p * Math.cos(ang + 0.42), y2 - p * Math.sin(ang + 0.42));
+      ctx.closePath();
+      if (c === "#fff") ctx.stroke(); else ctx.fill();
+    }
+  }
+  /** lugar da caixa da anotação (w x h) perto de (px, py): no branco do projeto, sem cobrir
+   *  outra anotação nem sair da folha; o mais perto possível do ponto */
+  function lugarDaNota(tinta, ocupados, W, H, px, py, w, h, r) {
+    const f2 = tinta.f * tinta.f, area = (w * h) / f2;
+    let melhor = null;
+    for (const d of [2.5, 4, 6, 9, 13, 18, 25, 34, 45].map((k) => k * r)) {
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const cx = px + Math.cos(a) * (d + w / 2), cy = py + Math.sin(a) * (d + h / 2);
+        const ret = { x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 };
+        const c = (tintaEm(tinta, ret) / area) * 100 + ((sobreposicao(ret, ocupados) + foraDa(ret, W, H)) / (w * h)) * 400 + (d / r) * 0.6;
+        if (!melhor || c < melhor.c) melhor = { ...ret, c };
+      }
+    }
+    return melhor;
+  }
+  const caixa = (ctx, x, y, w, h, raio) => {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, raio);
+    else ctx.rect(x, y, w, h);
+  };
+  /** Croqui da obra em PDF, uma página por folha do projeto, com os pontos (P), os vãos, o
+   *  rascunho e as anotações em azul no branco do projeto, com seta até o lugar marcado.
+   *  folhas: [{ pag, marcas: [{ nome, x, y, cor }], vaos: [{ x, y, texto }],
+   *  tracos: [[[x, y]...]], notas: [{ x, y, texto }] }] (x, y em fração da folha). */
+  async function croquiAnotado(proj, folhas, { titulo = "", aoAndar = () => {} } = {}) {
+    if (!window.jspdf?.jsPDF) throw new Error("A biblioteca do PDF não carregou. Abra o app com internet uma vez.");
+    const { jsPDF } = window.jspdf;
+    let pdf = null;
+    for (const [i, fl] of folhas.entries()) {
+      aoAndar(i, folhas.length);
+      const { cv, w, h } = await imagem(proj, { pag: fl.pag, marcas: fl.marcas || [], px: CELULAR ? 2400 : 3000, canvas: true });
+      const ctx = cv.getContext("2d");
+      const r = Math.max(6, Math.round(Math.max(w, h) / 130));
+      // rascunho do campo (alteração da rede)
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const t of fl.tracos || []) {
+        if (t.length < 2) continue;
+        for (const [cor, l] of [["#fff", r * 0.5 + 3], [AZUL, r * 0.5]]) {
+          ctx.strokeStyle = cor;
+          ctx.lineWidth = l;
+          ctx.beginPath();
+          t.forEach(([x, y], k) => (k ? ctx.lineTo(x * w, y * h) : ctx.moveTo(x * w, y * h)));
+          ctx.stroke();
+        }
+      }
+      // vãos: metragem e espaçadores no meio do vão
+      ctx.font = `700 ${Math.round(r * 1.5)}px Helvetica, Arial, sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      const ocupados = [];
+      for (const v of fl.vaos || []) {
+        const tw = ctx.measureText(v.texto).width + r * 1.2, th = r * 2.1, x = v.x * w, y = v.y * h;
+        ctx.fillStyle = "#fff";
+        ctx.strokeStyle = "#7c3aed";
+        ctx.lineWidth = Math.max(2, r * 0.18);
+        caixa(ctx, x - tw / 2, y - th / 2, tw, th, th / 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#6d28d9";
+        ctx.fillText(v.texto, x, y);
+        ocupados.push({ x0: x - tw / 2, y0: y - th / 2, x1: x + tw / 2, y1: y + th / 2 });
+      }
+      ctx.textAlign = "left";
+      // anotações: caixa no branco do projeto e seta até o lugar marcado
+      if ((fl.notas || []).length) {
+        const tinta = mapaTinta(cv, 3);
+        const fonte = Math.round(r * 1.45), linhaH = fonte * 1.22, pad = r * 0.6;
+        ctx.font = `600 ${fonte}px Helvetica, Arial, sans-serif`;
+        for (const n of fl.notas) {
+          const linhas = quebrarTexto(ctx, n.texto, w * 0.26);
+          const bw = Math.max(...linhas.map((l) => ctx.measureText(l).width)) + pad * 2, bh = linhas.length * linhaH + pad * 2;
+          const px = n.x * w, py = n.y * h;
+          const lugar = lugarDaNota(tinta, ocupados, w, h, px, py, bw, bh, r);
+          ocupados.push(lugar);
+          // a seta sai da borda da caixa mais perto do ponto
+          const sx = Math.max(lugar.x0, Math.min(px, lugar.x1)), sy = Math.max(lugar.y0, Math.min(py, lugar.y1));
+          seta(ctx, sx, sy, px, py, AZUL, Math.max(2, r * 0.2));
+          ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+          ctx.strokeStyle = AZUL;
+          ctx.lineWidth = Math.max(2, r * 0.16);
+          caixa(ctx, lugar.x0, lugar.y0, bw, bh, r * 0.5);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = AZUL;
+          ctx.textBaseline = "top";
+          linhas.forEach((l, k) => ctx.fillText(l, lugar.x0 + pad, lugar.y0 + pad + k * linhaH + (linhaH - fonte) / 2));
+        }
+      }
+      if (titulo) {
+        ctx.font = `700 ${Math.round(r * 1.3)}px Helvetica, Arial, sans-serif`;
+        ctx.textBaseline = "top";
+        const t = `${titulo}${folhas.length > 1 ? ` · folha ${fl.pag}` : ""}`;
+        const tw = ctx.measureText(t).width;
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.fillRect(r * 0.6, r * 0.6, tw + r, r * 2);
+        ctx.fillStyle = "#0f172a";
+        ctx.fillText(t, r * 1.1, r * 0.95);
+      }
+      const k = 0.5, pw = w * k, ph = h * k, orient = w > h ? "landscape" : "portrait";
+      const url = cv.toDataURL("image/jpeg", 0.88);
+      cv.width = cv.height = 0; // solta a memória antes da próxima folha
+      if (!pdf) pdf = new jsPDF({ unit: "pt", format: [pw, ph], orientation: orient });
+      else pdf.addPage([pw, ph], orient);
+      pdf.addImage(url, "JPEG", 0, 0, pw, ph);
+    }
+    aoAndar(folhas.length, folhas.length);
+    return pdf.output("blob");
   }
 
   // ------------------------------------------------------------------ nome do poste (OCR)
@@ -1557,5 +1761,5 @@
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  window.Croqui = { Visor, imagem, paginas, paraPdf, croquiAnotado, AZUL, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();

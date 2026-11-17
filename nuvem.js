@@ -208,8 +208,10 @@
       corpo: {
         id: obra.id, numero: obra.numero, local: obra.local || null, municipio: obra.municipio || null,
         departamento: obra.departamento, equipe: obra.equipe || null, obs: obra.obs || null,
-        pontos: obra.pontos, fotos: infos, projeto: obra.projeto || null, total: totais.valor, total_us: totais.us,
-        qtd_pontos: obra.pontos.filter((p) => !p.geral).length, criada_em: obra.criada_em, atualizada_em: obra.atualizada_em,
+        // anotações e rascunho do croqui vão junto do projeto (a tabela não tem coluna própria)
+        pontos: obra.pontos, fotos: infos, projeto: obra.projeto ? { ...obra.projeto, anotacoes: obra.anotacoes || null } : null,
+        total: totais.valor, total_us: totais.us,
+        qtd_pontos: obra.pontos.filter((p) => !p.geral && !p.vao).length, criada_em: obra.criada_em, atualizada_em: obra.atualizada_em,
       },
     });
     // só marca como enviada se ninguém mexeu na obra enquanto ela subia

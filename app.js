@@ -95,7 +95,7 @@
     await salvarAgora();
     // outro ponto (ou outra tela): a pesquisa dos serviços lançados começa limpa
     if (tela !== "ponto" || extra.pontoId !== estado.pontoId) estado.filtroItens = "";
-    if (tela !== "croqui") { estado.cqNovo = null; if (!("cqMover" in extra)) estado.cqMover = null; }
+    if (tela !== "croqui") { estado.cqNovo = null; estado.cqNota = null; estado.cqDesenho = false; if (!("cqMover" in extra)) estado.cqMover = null; }
     Object.assign(estado, { tela, busca: "", escolhido: null, qtd: "", arquivo: null }, extra);
     if (tela !== "obra-form") estado.projetoNovo = null;
     if (tela === "inicio") {
@@ -287,7 +287,7 @@
     const remota = estado.remotas?.find((x) => x.id === id);
     const obra = {
       id: r.id, numero: r.numero, local: r.local || "", municipio: r.municipio || "", departamento: r.departamento,
-      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto || null,
+      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null,
       criada_em: r.criada_em, atualizada_em: r.atualizada_em, pendente: false, enviada_em: r.recebida_em,
       dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null,
     };
@@ -753,6 +753,58 @@
   }
   const arred = (v) => Math.round(v * 100000) / 100000;
   const pontoPorId = (id) => estado.obra?.pontos.find((p) => p.id === id) || null;
+  /** os postes da obra: os pontos de verdade, sem os vãos (que também são lançados na medição) */
+  const postes = (o) => M.pontosReais(o.pontos).filter((p) => !p.vao);
+  /** anotações e rascunho do campo no croqui: { notas: [{ id, pag, x, y, texto }], tracos: [{ id, pag, pts }] } */
+  const anotacoes = (o) => {
+    if (!o.anotacoes) o.anotacoes = { notas: [], tracos: [] };
+    o.anotacoes.notas = o.anotacoes.notas || [];
+    o.anotacoes.tracos = o.anotacoes.tracos || [];
+    return o.anotacoes;
+  };
+  const nomeDoPoste = (id) => pontoPorId(id)?.nome || "?";
+  /** "35 m · 4 esp." do vão (o que já foi informado) */
+  const medidasVao = (v) => [v.vao.metros ? `${v.vao.metros} m` : "", v.vao.espacadores ? `${v.vao.espacadores} esp.` : ""].filter(Boolean).join(" · ");
+  /** Vão entre dois postes desta folha em que o toque caiu: o toque fica "entre" os dois (na
+   *  direção da reta, nem antes de um nem depois do outro) e, dos que servem, o mais perto da
+   *  reta. A marca do ponto fica no (P) verde, às vezes longe do poste: o toque na rede pode
+   *  cair bem ao lado da reta entre as marcas (até 3 vezes o comprimento do vão). */
+  function vaoTocado(pos) {
+    if (!visor?.W) return null;
+    const ps = postes(estado.obra).filter((p) => p.croqui && (p.croqui.pag || 1) === pos.pag);
+    const kx = visor.W * visor.s, ky = visor.H * visor.s; // fração da folha -> px da tela
+    const perto = (q, a, b, folga) => {
+      const dx = (b.x - a.x) * kx, dy = (b.y - a.y) * ky, L2 = dx * dx + dy * dy;
+      if (L2 < 1) return null;
+      const t = ((q.x - a.x) * kx * dx + (q.y - a.y) * ky * dy) / L2;
+      if (t < folga || t > 1 - folga) return null;
+      return { d: Math.hypot(a.x * kx + t * dx - q.x * kx, a.y * ky + t * dy - q.y * ky), L: Math.sqrt(L2) };
+    };
+    // vão é entre vizinhos: um dos dois está entre os 3 postes mais perto do outro
+    const dist = (a, b) => Math.hypot((a.x - b.x) * kx, (a.y - b.y) * ky);
+    const vizinhos = ps.map((p) => new Set(ps.filter((q) => q !== p).sort((q, r) => dist(p.croqui, q.croqui) - dist(p.croqui, r.croqui)).slice(0, 3)));
+    let melhor = null;
+    for (let i = 0; i < ps.length; i++) {
+      for (let j = i + 1; j < ps.length; j++) {
+        if (!vizinhos[i].has(ps[j]) && !vizinhos[j].has(ps[i])) continue;
+        const a = ps[i].croqui, b = ps[j].croqui;
+        const m = perto(pos, a, b, 0.05);
+        if (!m || m.d > Math.max(40, m.L * 3)) continue;
+        // outro poste em cima do trecho: não é um vão só (é P1-P2 e P2-P3)
+        if (ps.some((c, k) => k !== i && k !== j && (perto(c.croqui, a, b, 0.02)?.d ?? 99) < Math.max(14, m.L * 0.12))) continue;
+        if (!melhor || m.d < melhor.d || (m.d === melhor.d && m.L < melhor.L)) melhor = { de: ps[i].id, para: ps[j].id, L: m.L, d: m.d };
+      }
+    }
+    return melhor && { de: melhor.de, para: melhor.para };
+  }
+  const vaoEntre = (o, de, para) => o.pontos.find((p) => p.vao && ((p.vao.de === de && p.vao.para === para) || (p.vao.de === para && p.vao.para === de)));
+  function terminarTraco(pts) {
+    const o = estado.obra;
+    if (!o || soLeitura(o)) return;
+    anotacoes(o).tracos.push({ id: novoId(), pag: estado.cqPag, pts });
+    salvarAgora();
+    atualizarMarcas();
+  }
 
   // ---------- análise geral do projeto
   // Ao anexar o projeto: acha todos os "(P)" verdes, cria os pontos já marcados no croqui e
@@ -836,18 +888,20 @@
   function telaCroqui() {
     const o = estado.obra;
     const t = M.totaisObra(o);
-    const reais = M.pontosReais(o.pontos);
+    const reais = postes(o);
     const marcados = reais.filter((p) => p.croqui).length;
     const sel = pontoPorId(estado.cqSel);
     const mover = pontoPorId(estado.cqMover);
     const pags = o.projeto?.paginas || visor?.paginas || 1;
     const pag = Math.min(estado.cqPag, pags);
-    const dica = estado.cqNovo || sel ? "" : mover ? `<div class="cq-dica cq-dica-mover"><span>📌 Toque no croqui onde fica o <b>${esc(mover.nome)}</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
+    const dica = estado.cqDesenho ? `<div class="cq-dica cq-dica-rascunho"><span>✏️ Rascunho: desenhe com um dedo · dois dedos movem</span><button type="button" class="link" data-acao="cq-desfazer">↶ Desfazer</button><button type="button" class="link" data-acao="cq-rascunho">Pronto</button></div>`
+      : estado.cqNovo || sel || estado.cqNota ? "" : mover ? `<div class="cq-dica cq-dica-mover"><span>📌 Toque no croqui onde fica o <b>${esc(mover.nome)}</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : !o.projeto ? ""
         : soLeitura(o) ? (marcados ? "" : `<div class="cq-dica">Nenhum ponto marcado no croqui.</div>`)
           : analiseHtml(o) || (!marcados ? `<div class="cq-dica">Toque no poste para lançar os serviços dele</div>` : "");
-    const baixo = sel ? folhaPontoCroqui(sel) : estado.cqNovo ? folhaNovoCroqui() : `<div class="cq-barra">
+    const baixo = sel ? folhaPontoCroqui(sel) : estado.cqNota ? folhaNotaCroqui() : estado.cqNovo ? folhaNovoCroqui() : `<div class="cq-barra">
         <div class="rodape-total"><span>Total da obra</span><b>${M.fmtMoeda(t.valor)}</b></div>
+        ${o.projeto ? `<button type="button" class="botao botao-claro botao-croqui" data-acao="cq-baixar" ${estado.baixandoCroqui ? "disabled" : ""} title="Baixar o croqui com os pontos, vãos, anotações e rascunho">${estado.baixandoCroqui ? "⏳" : "⬇"} Croqui</button>` : ""}
         <button type="button" class="botao" data-acao="medicao" ${o.pontos.some((p) => p.itens.length) ? "" : "disabled"}>Gerar medição</button>
       </div>`;
     return `<div class="pagina-croqui">
@@ -867,6 +921,7 @@
           <button type="button" data-acao="cq-zoom" data-f="1.6" aria-label="Aproximar">+</button>
           <button type="button" data-acao="cq-zoom" data-f="0.625" aria-label="Afastar">−</button>
           <button type="button" data-acao="cq-ajustar" aria-label="Folha inteira">⤢</button>
+          ${o.projeto && !soLeitura(o) ? `<button type="button" class="cq-lapis${estado.cqDesenho ? " ativo" : ""}" data-acao="cq-rascunho" aria-label="Rascunho: desenhar no croqui" aria-pressed="${!!estado.cqDesenho}" title="Rascunho">✏️</button>` : ""}
         </div>
       </div>
       ${baixo}
@@ -893,7 +948,7 @@
         <b class="valor">${M.fmtMoeda(tp.valor)}</b>
         <button type="button" class="remover" data-acao="cq-fechar" aria-label="Fechar">×</button>
       </div>
-      <small class="sub">${p.dia ? esc(M.fmtDia(p.dia)) + " · " : ""}${plural(p.itens.length, "serviço", "serviços")} · ${p.fotos.length ? "📷 " + p.fotos.length : "sem foto"}${p.croqui ? "" : " · fora do croqui"}</small>
+      <small class="sub">${p.vao ? `📏 ${esc(medidasVao(p) || "metragem e espaçadores não informados")} · ` : ""}${p.dia ? esc(M.fmtDia(p.dia)) + " · " : ""}${plural(p.itens.length, "serviço", "serviços")} · ${p.fotos.length ? "📷 " + p.fotos.length : "sem foto"}${p.croqui ? "" : " · fora do croqui"}</small>
       ${p.obs ? `<p class="cq-obs">${esc(p.obs)}</p>` : ""}
       <div class="cq-corpo">
         ${secoes || `<p class="vazio">Nenhum serviço lançado neste ponto ainda.</p>`}
@@ -901,24 +956,29 @@
       </div>
       <div class="dupla">
         <button type="button" class="botao" data-acao="abrir-ponto" data-id="${p.id}">${soLeitura(o) ? "Abrir o ponto" : "✏️ Lançar serviços e fotos"}</button>
-        ${soLeitura(o) ? "" : `<button type="button" class="botao botao-claro" data-acao="cq-mover" data-id="${p.id}">${p.croqui ? "↔ Mudar lugar" : "📌 Marcar no croqui"}</button>`}
+        ${soLeitura(o) || p.vao ? "" : `<button type="button" class="botao botao-claro" data-acao="cq-mover" data-id="${p.id}">${p.croqui ? "↔ Mudar lugar" : "📌 Marcar no croqui"}</button>`}
       </div>
-      ${soLeitura(o) ? "" : `<button type="button" class="link cq-excluir" data-acao="cq-excluir" data-id="${p.id}">🗑 Excluir ponto ${esc(p.nome)}</button>`}
+      ${soLeitura(o) ? "" : `<button type="button" class="link cq-excluir" data-acao="cq-excluir" data-id="${p.id}">🗑 Excluir ${p.vao ? "o" : "ponto"} ${esc(p.nome)}</button>`}
     </div>`;
   }
 
   /** toque num lugar vazio: nome do ponto novo (ou pôr ali um ponto que ainda não tem lugar) */
   function folhaNovoCroqui() {
     const n = estado.cqNovo;
-    const soltos = M.pontosReais(estado.obra.pontos).filter((p) => !p.croqui).sort(cmpPonto);
+    const soltos = postes(estado.obra).filter((p) => !p.croqui).sort(cmpPonto);
     const nome = (n.nome || "").trim().toUpperCase();
-    const jaExiste = !n.editado && nome && M.pontosReais(estado.obra.pontos).find((p) => p.nome.trim().toUpperCase() === nome);
+    const jaExiste = !n.editado && nome && postes(estado.obra).find((p) => p.nome.trim().toUpperCase() === nome);
+    const vao = n.vao && vaoEntre(estado.obra, n.vao.de, n.vao.para);
     return `<div class="cq-folha" role="dialog" aria-label="Novo ponto">
       <div class="cq-folha-topo"><b>Novo ponto aqui</b><button type="button" class="remover" data-acao="cq-cancelar" aria-label="Cancelar">×</button></div>
       <label class="campo">Nome do ponto
         <input id="cq-nome" value="${esc(n.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off" maxlength="30">
       </label>
       ${avisoLido(n)}
+      <div class="cq-outros">
+        ${n.vao ? `<button type="button" class="botao botao-vao" data-acao="cq-vao">📏 Vão ${esc(nomeDoPoste(n.vao.de))}–${esc(nomeDoPoste(n.vao.para))}${vao ? ` <small>(${esc(medidasVao(vao) || "aberto")})</small>` : ""}</button>` : ""}
+        <button type="button" class="botao botao-claro botao-nota" data-acao="cq-anotar">📝 Anotar aqui</button>
+      </div>
       ${jaExiste ? `<div class="cq-existe">${jaExiste.croqui
         ? `<span>O <b>${esc(jaExiste.nome)}</b> já está marcado no croqui.</span><button type="button" class="botao botao-claro" data-acao="cq-ver" data-id="${jaExiste.id}">Ver o ${esc(jaExiste.nome)}</button>`
         : `<span>O <b>${esc(jaExiste.nome)}</b> já foi lançado e está fora do croqui.</span><button type="button" class="botao" data-acao="cq-usar" data-id="${jaExiste.id}">Marcar o ${esc(jaExiste.nome)} aqui</button>`}</div>` : ""}
@@ -931,15 +991,52 @@
     </div>`;
   }
 
+  /** anotação aberta embaixo do croqui (nova ou já feita) */
+  function folhaNotaCroqui() {
+    const n = estado.cqNota;
+    const ler = soLeitura(estado.obra);
+    return `<div class="cq-folha cq-folha-nota" role="dialog" aria-label="Anotação">
+      <div class="cq-folha-topo"><b>📝 Anotação</b><button type="button" class="remover" data-acao="cq-nota-fechar" aria-label="Fechar">×</button></div>
+      ${ler ? `<p class="cq-obs">${esc(n.texto)}</p>` : `<label class="campo">O que mudou aqui
+        <textarea id="cq-nota-texto" rows="3" maxlength="400" placeholder="Ex.: poste ficou 5 m antes; rede passa do outro lado da rua">${esc(n.texto)}</textarea>
+      </label>
+      <div class="dupla">
+        <button type="button" class="botao botao-claro" data-acao="cq-nota-fechar">Cancelar</button>
+        <button type="button" class="botao" data-acao="cq-nota-salvar">Salvar anotação</button>
+      </div>
+      ${n.id ? `<button type="button" class="link cq-excluir" data-acao="cq-nota-excluir">🗑 Excluir anotação</button>` : ""}`}
+    </div>`;
+  }
+
   function atualizarMarcas() {
     if (!visor || estado.tela !== "croqui" || !estado.obra) return;
-    const lista = M.pontosReais(estado.obra.pontos)
-      .filter((p) => p.croqui && (p.croqui.pag || 1) === estado.cqPag)
+    const o = estado.obra, pag = estado.cqPag;
+    const lista = postes(o)
+      .filter((p) => p.croqui && (p.croqui.pag || 1) === pag)
       .map((p) => ({
         id: p.id, nome: p.nome, x: p.croqui.x, y: p.croqui.y,
         classe: [p.itens.length ? "cq-com" : "cq-sem", p.id === estado.cqSel ? "cq-sel" : "", p.id === estado.cqMover ? "cq-movendo" : ""].join(" "),
       }));
+    // vãos: linha entre os dois postes e a metragem no meio (o meio segue os postes)
+    const linhas = [];
+    for (const v of o.pontos.filter((p) => p.vao)) {
+      const a = pontoPorId(v.vao.de)?.croqui, b = pontoPorId(v.vao.para)?.croqui;
+      if (!a || !b || (a.pag || 1) !== pag || (b.pag || 1) !== pag) continue;
+      const x = arred((a.x + b.x) / 2), y = arred((a.y + b.y) / 2);
+      if (!v.croqui || v.croqui.x !== x || v.croqui.y !== y || (v.croqui.pag || 1) !== pag) v.croqui = { pag, x, y };
+      linhas.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, classe: `cq-vao-linha${v.id === estado.cqSel ? " cq-vao-sel" : ""}` });
+      lista.push({ id: v.id, nome: medidasVao(v) || "vão", x, y, classe: ["cq-vao", v.itens.length ? "cq-com" : "", v.id === estado.cqSel ? "cq-sel" : ""].join(" ") });
+    }
+    // anotações do campo, em azul
+    const an = o.anotacoes || {};
+    for (const n of an.notas || []) {
+      if (n.pag !== pag) continue;
+      const t = n.texto.length > 70 ? n.texto.slice(0, 67) + "…" : n.texto;
+      lista.push({ id: `nota:${n.id}`, nome: t, x: n.x, y: n.y, classe: `cq-nota${estado.cqNota?.id === n.id ? " cq-nota-sel" : ""}` });
+    }
     visor.marcas(lista);
+    visor.camada({ linhas, tracos: (an.tracos || []).filter((t) => t.pag === pag).map((t) => ({ pts: t.pts })) });
+    visor.desenhar(estado.cqDesenho && !soLeitura(o) ? terminarTraco : null);
     const n = estado.cqNovo;
     visor.alfinete(n && n.pag === estado.cqPag ? n : null);
   }
@@ -1003,11 +1100,12 @@
       avisar(`${mover.nome} marcado no croqui.`);
       return render();
     }
-    // com o resumo de um ponto aberto, o primeiro toque fora só fecha o resumo
-    if (estado.cqSel) { estado.cqSel = null; return render(); }
+    // com o resumo de um ponto (ou uma anotação) aberto, o primeiro toque fora só fecha
+    if (estado.cqSel || estado.cqNota) { estado.cqSel = null; estado.cqNota = null; return render(); }
     if (soLeitura(o)) return;
     const antes = estado.cqNovo;
     const n = { pag: estado.cqPag, x: arred(pos.x), y: arred(pos.y), nome: antes?.editado ? antes.nome : proximoNome(o), editado: !!antes?.editado };
+    n.vao = vaoTocado(n); // tocou na linha entre dois postes: dá para abrir o vão
     estado.cqNovo = n;
     estado.cqRevelar = true;
     if (o.projeto) n.lendo = true;
@@ -1056,6 +1154,13 @@
     if (estado.tela !== "croqui") return;
     if (estado.cqMover) return avisar("Toque num lugar vazio do croqui.", "guardado");
     estado.cqNovo = null;
+    if (String(id).startsWith("nota:")) {
+      const n = (estado.obra.anotacoes?.notas || []).find((x) => `nota:${x.id}` === id);
+      estado.cqSel = null;
+      estado.cqNota = n ? { ...n } : null;
+      return render();
+    }
+    estado.cqNota = null;
     estado.cqSel = id;
     estado.cqRevelar = true;
     render();
@@ -1547,17 +1652,21 @@
       <div class="ponto-colunas"><div class="ponto-col">
       <fieldset class="conjunto" ${soLeitura(o) ? "disabled" : ""}>
       <section class="cartao dados">
-        ${p.geral ? `<p class="faixa faixa-geral">🧰 <b>Serviços da obra, sem ponto.</b> O que for lançado aqui soma no total da obra e sai na medição como <b>SERVIÇOS GERAIS</b>.</p>` : `<label class="campo">Ponto
+        ${p.geral ? `<p class="faixa faixa-geral">🧰 <b>Serviços da obra, sem ponto.</b> O que for lançado aqui soma no total da obra e sai na medição como <b>SERVIÇOS GERAIS</b>.</p>` : p.vao ? `<p class="faixa faixa-vao">📏 <b>Vão entre ${esc(nomeDoPoste(p.vao.de))} e ${esc(nomeDoPoste(p.vao.para))}</b></p>
+        <div class="vao-campos">
+          <label class="campo">Metragem (m)<input id="p-metros" inputmode="decimal" value="${esc(p.vao.metros || "")}" placeholder="Ex.: 35" autocomplete="off"></label>
+          <label class="campo">Espaçadores<input id="p-esp" inputmode="numeric" value="${esc(p.vao.espacadores || "")}" placeholder="Ex.: 4" autocomplete="off"></label>
+        </div>` : `<label class="campo">Ponto
           <input id="p-nome" value="${esc(p.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off">
         </label>`}
         <label class="campo"><span>Observação <small>(se tiver)</small></span>
           <textarea id="p-obs" rows="2" placeholder="${p.geral ? "Ex.: serviços do trecho todo" : "Ex.: poste novo 11/300, troca de cruzeta"}">${esc(p.obs)}</textarea>
         </label>
-        ${p.geral ? "" : `<div class="gps">
+        ${p.geral || p.vao ? "" : `<div class="gps">
           ${u ? `<span class="utm"><small>UTM ${esc(u.zona)}</small> <b>X</b> ${u.x} <b>Y</b> ${u.y} <small>±${Math.round(p.gps.prec || 0)} m</small></span>` : `<span class="sub">Sem coordenada</span>`}
           <button type="button" class="link" data-acao="gps">${p.gps ? "Atualizar" : "📍 Marcar coordenada"}</button>
         </div>`}
-        ${p.geral || !o.projeto ? "" : `<div class="gps no-croqui">
+        ${p.geral || p.vao || !o.projeto ? "" : `<div class="gps no-croqui">
           ${p.croqui ? `<span>📌 Marcado no croqui${(o.projeto.paginas || 1) > 1 ? ` <small>(folha ${p.croqui.pag || 1})</small>` : ""}</span>` : `<span class="sub">Fora do croqui</span>`}
           <span>${p.croqui ? `<button type="button" class="link" data-acao="ver-no-croqui">Ver</button>` : ""}
           <button type="button" class="link" data-acao="marcar-no-croqui">${p.croqui ? "Mudar lugar" : "📌 Marcar no croqui"}</button></span>
@@ -1566,6 +1675,7 @@
       </fieldset>
 
       ${doProjetoHtml(o, p)}
+      ${p.vao && !soLeitura(o) ? vaoServicosHtml(p) : ""}
 
       <section class="cartao adicionar" ${soLeitura(o) ? "hidden" : ""}>
         <b>Serviços</b>
@@ -1608,6 +1718,79 @@
       ${folhaHtml()}
       ${fotoHtml()}
     </div>`;
+  }
+
+  /** Serviços do vão: os por metro (nivelamento) já com a metragem e os espaçadores já com
+   *  a quantidade informada. Tocar abre a quantidade para conferir e lançar. */
+  function vaoServicosHtml(p) {
+    const dep = depRapidos === "LV" ? "C&M (LV)" : "C&M (LM)";
+    const tipo = (g) => (/nivelamento vao/.test(normalizar(g.descricao)) ? 0 : 1);
+    const lista = grupos().filter((g) => g.departamento === dep && /nivelamento vao|espacador/.test(normalizar(g.descricao)))
+      .sort((a, b) => tipo(a) - tipo(b) || a.descricao.localeCompare(b.descricao, "pt-BR"));
+    const botoes = lista.map((g) => {
+      const porMetro = /nivelamento vao/.test(normalizar(g.descricao));
+      const qtd = porMetro ? p.vao.metros : p.vao.espacadores;
+      const usado = p.itens.some((i) => i.codigo === g.codigo && i.departamento === g.departamento);
+      // sem o LM/LV e o "POR M" (já mostrados), mas com o (SDMT)/(SDBT): há o mesmo nome nos dois
+      const nome = g.descricao.replace(/\s+(LM|LV)\b/, "").replace(/\s*POR M\s*$/, "").replace(/^NIVELAMENTO VÃO /, "Nivelamento ").replace(/\s+/g, " ").trim();
+      return `<button type="button" class="rapido vao-servico${usado ? " rapido-usado" : ""}" data-acao="vao-servico" data-chave="${esc(g.chave)}" data-vao-qtd="${porMetro ? "m" : "esp"}" data-qtd="${esc(qtd || "")}">
+        <span>${esc(nome)} <small>${esc(g.codigo)}${porMetro ? " · por m" : ""}</small></span>${qtd ? `<b class="rapido-qtd q-ins" data-vao-mostra>${esc(qtd)}${porMetro ? " m" : ""}</b>` : `<b class="rapido-qtd q-ins" data-vao-mostra hidden></b>`}</button>`;
+    }).join("");
+    return `<section class="cartao vao-servicos">
+      <b>Serviços do vão</b>
+      <small class="sub">A metragem vai para os serviços por metro e os espaçadores para o espaçador. Toque para conferir e lançar.</small>
+      <div class="dep-rapidos" role="group" aria-label="Departamento">
+        ${["LM", "LV"].map((d) => `<button type="button" class="dep-rapido${d === depRapidos ? " ativo" : ""}" data-acao="dep-rapidos" data-dep="${d}" aria-pressed="${d === depRapidos}">${d}</button>`).join("")}
+      </div>
+      <div class="rapidos rapidos-vao">${botoes || `<p class="vazio">Nenhum serviço de vão no catálogo.</p>`}</div>
+    </section>`;
+  }
+  /** a metragem ou os espaçadores mudaram: troca só a quantidade dos botões (o teclado fica) */
+  function atualizarBotoesVao(p) {
+    document.querySelectorAll("[data-vao-qtd]").forEach((b) => {
+      const m = b.dataset.vaoQtd === "m", q = m ? p.vao.metros : p.vao.espacadores;
+      b.dataset.qtd = q || "";
+      const el = b.querySelector("[data-vao-mostra]");
+      if (el) { el.textContent = q ? `${q}${m ? " m" : ""}` : ""; el.hidden = !q; }
+    });
+  }
+
+  async function baixarCroqui() {
+    const o = estado.obra;
+    if (!o?.projeto || estado.baixandoCroqui) return;
+    estado.baixandoCroqui = true;
+    render();
+    avisar("Montando o croqui…", "guardado");
+    try {
+      const proj = await garantirProjeto(o);
+      if (!proj) throw new Error(navigator.onLine ? "Não deu para baixar o projeto desta obra." : "Sem internet: o projeto desta obra não está neste celular.");
+      const total = await Croqui.paginas(proj);
+      const an = o.anotacoes || {};
+      const naFolha = (c, pag) => c && (c.pag || 1) === pag;
+      const folhas = [];
+      for (let pag = 1; pag <= total; pag++) {
+        const f = {
+          pag,
+          marcas: postes(o).filter((p) => naFolha(p.croqui, pag)).map((p) => ({ nome: p.nome, x: p.croqui.x, y: p.croqui.y, cor: p.itens.length ? Croqui.COR_COM : Croqui.COR_SEM })),
+          vaos: o.pontos.filter((v) => v.vao && naFolha(v.croqui, pag)).map((v) => ({ x: v.croqui.x, y: v.croqui.y, texto: `${nomeDoPoste(v.vao.de)}–${nomeDoPoste(v.vao.para)}${medidasVao(v) ? " · " + medidasVao(v) : ""}` })),
+          tracos: (an.tracos || []).filter((t) => t.pag === pag).map((t) => t.pts),
+          notas: (an.notas || []).filter((n) => n.pag === pag).map((n) => ({ x: n.x, y: n.y, texto: n.texto })),
+        };
+        // só as folhas com alguma coisa marcada (a 1ª sempre)
+        if (pag === 1 || f.marcas.length || f.vaos.length || f.tracos.length || f.notas.length) folhas.push(f);
+      }
+      const blob = await Croqui.croquiAnotado(proj, folhas, {
+        titulo: `Obra ${o.numero}${o.municipio ? " · " + o.municipio : ""}`,
+        aoAndar: (f, t) => { if (t > 1 && f < t) avisar(`Montando o croqui… folha ${f + 1} de ${t}`, "guardado"); },
+      });
+      baixar(blob, `CROQUI OBRA ${o.numero}.pdf`);
+      avisar("Croqui baixado.");
+    } catch (e) {
+      console.error(e);
+      avisar(e.message || "Não deu para montar o croqui.", "erro");
+    }
+    estado.baixandoCroqui = false;
+    if (estado.tela === "croqui") render();
   }
 
   function folhaHtml() {
@@ -2165,6 +2348,7 @@
         return;
       }
       o.projeto = { nome: pn.nome, tipo: pn.tipo, tamanho: pn.blob.size, em, ...(pn.paginas ? { paginas: pn.paginas } : {}) };
+      if (pn.modo !== "adicionar") o.anotacoes = null; // projeto trocado: as anotações eram do antigo
       estado.projetoNovo = null;
       estado.cqPag = 1;
     }
@@ -2535,6 +2719,79 @@
         if (el) el.outerHTML = doProjetoHtml(o, p);
         return;
       }
+      case "vao-servico": { // serviço do vão: abre a quantidade com a metragem ou os espaçadores
+        const g = grupos().find((x) => x.chave === alvo.dataset.chave);
+        if (!g) return;
+        estado.escolhido = { ...g };
+        estado.qtd = alvo.dataset.qtd || "";
+        return render();
+      }
+      case "cq-vao": { // abre (ou cria) o vão entre os dois postes tocados
+        const n = estado.cqNovo;
+        if (!n?.vao) return;
+        let v = vaoEntre(o, n.vao.de, n.vao.para);
+        if (!v) {
+          const a = pontoPorId(n.vao.de), b = pontoPorId(n.vao.para);
+          if (!a?.croqui || !b?.croqui) return;
+          v = {
+            id: novoId(), nome: `Vão ${a.nome}–${b.nome}`, vao: { de: a.id, para: b.id, metros: "", espacadores: "" },
+            croqui: { pag: n.pag, x: arred((a.croqui.x + b.croqui.x) / 2), y: arred((a.croqui.y + b.croqui.y) / 2) },
+            dia: "", obs: "", gps: null, itens: [], fotos: [],
+          };
+          o.pontos.push(v);
+          salvarAgora();
+        }
+        estado.cqNovo = null;
+        return irPara("ponto", { pontoId: v.id });
+      }
+      case "cq-anotar": {
+        const n = estado.cqNovo;
+        if (!n) return;
+        estado.cqNota = { id: null, pag: n.pag, x: n.x, y: n.y, texto: "" };
+        estado.cqNovo = null;
+        render();
+        document.getElementById("cq-nota-texto")?.focus();
+        return;
+      }
+      case "cq-nota-fechar":
+        estado.cqNota = null;
+        return render();
+      case "cq-nota-salvar": {
+        const n = estado.cqNota;
+        const texto = (n?.texto || "").trim();
+        if (!texto) return avisar("Escreva a anotação.", "erro");
+        const an = anotacoes(o);
+        const ja = n.id && an.notas.find((x) => x.id === n.id);
+        if (ja) ja.texto = texto;
+        else an.notas.push({ id: novoId(), pag: n.pag, x: n.x, y: n.y, texto, em: new Date().toISOString() });
+        estado.cqNota = null;
+        salvarAgora();
+        avisar("Anotação salva.");
+        return render();
+      }
+      case "cq-nota-excluir": {
+        const n = estado.cqNota;
+        if (!n?.id || !confirm("Excluir esta anotação do croqui?")) return;
+        anotacoes(o).notas = anotacoes(o).notas.filter((x) => x.id !== n.id);
+        estado.cqNota = null;
+        salvarAgora();
+        return render();
+      }
+      case "cq-rascunho": // liga e desliga o lápis
+        estado.cqDesenho = !estado.cqDesenho;
+        estado.cqNovo = null;
+        estado.cqSel = null;
+        estado.cqNota = null;
+        if (estado.cqDesenho) avisar("Rascunho ligado: desenhe com um dedo. Dois dedos movem o croqui.", "guardado");
+        return render();
+      case "cq-desfazer": { // tira o último traço desta folha
+        const tr = anotacoes(o).tracos;
+        for (let i = tr.length - 1; i >= 0; i--) {
+          if (tr[i].pag === estado.cqPag) { tr.splice(i, 1); salvarAgora(); atualizarMarcas(); return; }
+        }
+        return avisar("Nada para desfazer nesta folha.", "guardado");
+      }
+      case "cq-baixar": return baixarCroqui();
       case "dep-rapidos": // lista pré-definida da LM ou da LV
         depRapidos = alvo.dataset.dep === "LV" ? "LV" : "LM";
         try { localStorage.setItem("croqui_rapidos", depRapidos); } catch (e) { /* sem guardar */ }
@@ -2682,6 +2939,14 @@
     if (t.id === "cq-nome" && estado.cqNovo) { Object.assign(estado.cqNovo, { nome: t.value.toUpperCase().slice(0, 30), editado: true }); return; }
     if (p && t.id === "p-nome") { p.nome = t.value.toUpperCase().slice(0, 30); salvarDepois(); return; }
     if (p && t.id === "p-obs") { p.obs = t.value; salvarDepois(); return; }
+    if (p?.vao && (t.id === "p-metros" || t.id === "p-esp")) {
+      const v = t.value.replace(/[^\d,.]/g, "").slice(0, 8);
+      if (t.id === "p-metros") p.vao.metros = v; else p.vao.espacadores = v.replace(/[,.].*$/, "");
+      salvarDepois();
+      atualizarBotoesVao(p);
+      return;
+    }
+    if (t.id === "cq-nota-texto" && estado.cqNota) { estado.cqNota.texto = t.value; return; }
   });
 
   $app.addEventListener("change", (e) => {

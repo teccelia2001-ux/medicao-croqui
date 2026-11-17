@@ -556,7 +556,7 @@
       obra.municipio && `Cidade: ${obra.municipio}`,
       obra.equipe && `Equipe executora: ${obra.equipe}`,
       supervisor && `Supervisor: ${supervisor}`,
-      `Pontos: ${pontosReais(pontos).length}`,
+      `Pontos: ${pontosReais(pontos).filter((p) => !p.vao).length}`,
     ].filter(Boolean);
     doc.setFont("helvetica", "normal");
     const linhasInfo = doc.splitTextToSize(infos.join("   ·   "), L);
