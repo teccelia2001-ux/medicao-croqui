@@ -835,6 +835,11 @@
     const v = pontoPorId(aj.id);
     if (aj.pts.length < 2 || !v) return render();
     v.vao.linha = aj.pts;
+    // poste extra (ou fora do croqui): fica onde o supervisor tocou
+    [v.vao.de, v.vao.para].forEach((id, i) => {
+      const q = pontoPorId(id);
+      if (q && !q.croqui) q.croqui = { pag: pos.pag, x: aj.pts[i][0], y: aj.pts[i][1] };
+    });
     v.croqui = { pag: pos.pag, x: arred((aj.pts[0][0] + aj.pts[1][0]) / 2), y: arred((aj.pts[0][1] + aj.pts[1][1]) / 2) };
     estado.cqAjuste = null;
     estado.cqSel = v.id;
@@ -845,7 +850,16 @@
   /** mudou o começo ou o fim do vão: novo nome, e a linha é refeita (de poste a poste) */
   function trocarPostesDoVao(v, campo) {
     const o = estado.obra;
-    const de = campo.id === "p-vao-de" ? campo.value : v.vao.de, para = campo.id === "p-vao-para" ? campo.value : v.vao.para;
+    const nome = campo.value.trim().toUpperCase().slice(0, 30);
+    if (!nome) return render(); // apagou: volta o que era
+    let q = postes(o).find((x) => x.nome.trim().toUpperCase() === nome);
+    if (!q) {
+      // poste extra, que não está no projeto: entra na obra e ganha lugar ao remarcar a linha
+      q = { id: novoId(), nome, dia: "", obs: "", gps: null, croqui: null, itens: [], fotos: [], extra: true };
+      o.pontos.push(q);
+      avisar(`Poste extra ${nome} criado. Toque em 📌 Remarcar a linha no croqui para marcar onde ele fica.`, "guardado");
+    }
+    const de = campo.id === "p-vao-de" ? q.id : v.vao.de, para = campo.id === "p-vao-para" ? q.id : v.vao.para;
     if (de === para) { avisar("O vão precisa de dois postes diferentes.", "erro"); return render(); }
     const outro = vaoEntre(o, de, para);
     if (outro && outro !== v) { avisar(`Já existe o ${outro.nome}.`, "erro"); return render(); }
@@ -855,7 +869,7 @@
     if (a && b) v.croqui = { pag: a.pag || 1, x: arred((a.x + b.x) / 2), y: arred((a.y + b.y) / 2) };
     salvarAgora();
     render();
-    acharLinhaDoVao(v);
+    if (a && b) acharLinhaDoVao(v);
   }
   const vaoEntre = (o, de, para) => o.pontos.find((p) => p.vao && ((p.vao.de === de && p.vao.para === para) || (p.vao.de === para && p.vao.para === de)));
   function terminarTraco(pts) {
@@ -1084,7 +1098,7 @@
     const linhas = [];
     for (const v of o.pontos.filter((p) => p.vao)) {
       const ra = pontoPorId(v.vao.de)?.croqui, rb = pontoPorId(v.vao.para)?.croqui;
-      if (!ra || !rb || (ra.pag || 1) !== pag || (rb.pag || 1) !== pag) continue;
+      if (v.vao.linha ? (v.croqui?.pag || 1) !== pag : !ra || !rb || (ra.pag || 1) !== pag || (rb.pag || 1) !== pag) continue;
       // de quadradinho a quadradinho (achado pelo app ou ajustado); sem isso, entre os (P)
       const [a, b] = v.vao.linha ? v.vao.linha.map(([x, y]) => ({ x, y })) : [ra, rb];
       const x = arred((a.x + b.x) / 2), y = arred((a.y + b.y) / 2);
@@ -1722,9 +1736,11 @@
       <section class="cartao dados">
         ${p.geral ? `<p class="faixa faixa-geral">🧰 <b>Serviços da obra, sem ponto.</b> O que for lançado aqui soma no total da obra e sai na medição como <b>SERVIÇOS GERAIS</b>.</p>` : p.vao ? `<p class="faixa faixa-vao">📏 <b>Vão entre ${esc(nomeDoPoste(p.vao.de))} e ${esc(nomeDoPoste(p.vao.para))}</b></p>
         <div class="vao-campos">
-          <label class="campo">De<select id="p-vao-de">${opcoesPostes(o, p.vao.de)}</select></label>
-          <label class="campo">Para<select id="p-vao-para">${opcoesPostes(o, p.vao.para)}</select></label>
+          <label class="campo">De<input id="p-vao-de" list="lista-postes" value="${esc(nomeDoPoste(p.vao.de))}" autocapitalize="characters" autocomplete="off" maxlength="30"></label>
+          <label class="campo">Para<input id="p-vao-para" list="lista-postes" value="${esc(nomeDoPoste(p.vao.para))}" autocapitalize="characters" autocomplete="off" maxlength="30"></label>
+          <datalist id="lista-postes">${opcoesPostes(o)}</datalist>
         </div>
+        <small class="sub">Escolha o poste ou digite outro (ex.: P27A): poste que não existe é criado como extra.</small>
         <label class="campo">Metragem (m)<input id="p-metros" inputmode="decimal" value="${esc(p.vao.metros || "")}" placeholder="Ex.: 35" autocomplete="off"></label>
         ${o.projeto ? `<button type="button" class="link link-remarcar" data-acao="vao-remarcar">📌 Remarcar a linha no croqui</button>` : ""}` : `<label class="campo">Ponto
           <input id="p-nome" value="${esc(p.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off">
@@ -1791,8 +1807,7 @@
   }
 
   /** os postes da obra para escolher o começo e o fim do vão */
-  const opcoesPostes = (o, sel) => postes(o).slice().sort(cmpPonto)
-    .map((q) => `<option value="${esc(q.id)}"${q.id === sel ? " selected" : ""}>${esc(q.nome)}</option>`).join("");
+  const opcoesPostes = (o) => postes(o).slice().sort(cmpPonto).map((q) => `<option value="${esc(q.nome)}"></option>`).join("");
   /** Serviços do vão, pré-definidos pelo supervisor (17/11/2026), todos da LM:
    *  [grupo, [[código, nome curto, "esp" (quantidade de espaçadores) ou "m" (metragem)]]] */
   const VAO_RAPIDOS = [
@@ -3054,13 +3069,14 @@
       atualizarBotoesVao(p);
       return;
     }
-    if (p?.vao && (t.id === "p-vao-de" || t.id === "p-vao-para")) return trocarPostesDoVao(p, t);
+    if (p?.vao && (t.id === "p-vao-de" || t.id === "p-vao-para")) return; // vale no "change"
     if (t.id === "cq-nota-texto" && estado.cqNota) { estado.cqNota.texto = t.value; return; }
   });
 
   $app.addEventListener("change", (e) => {
     const t = e.target;
     const p = ponto();
+    if (p?.vao && (t.id === "p-vao-de" || t.id === "p-vao-para")) return trocarPostesDoVao(p, t);
     if (t.dataset.acao === "projeto") {
       const arquivos = [...t.files];
       t.value = "";
