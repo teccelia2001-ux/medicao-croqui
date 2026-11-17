@@ -144,6 +144,17 @@ button:disabled { cursor: default; }
 .linha-topo { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .valor { color: #166534; white-space: nowrap; }
 .obra-item, .ponto-item { display: flex; flex-direction: column; gap: 4px; }
+/* cartão da obra com o 🗑 no canto de baixo, fora do botão que abre a obra */
+.obra-cartao { position: relative; display: flex; }
+.obra-cartao > .obra-item { flex: 1; }
+.obra-cartao.com-lixo > .obra-item > .linha-topo:last-child { padding-right: 40px; }
+.obra-lixo {
+  position: absolute; right: 8px; bottom: 8px;
+  width: 36px; height: 36px; border-radius: 10px;
+  border: 1px solid #fecaca; background: #fff; color: #b91c1c;
+  font-size: 16px; line-height: 1; display: grid; place-items: center;
+}
+.obra-lixo:hover, .obra-lixo:focus-visible { background: #fef2f2; }
 .ponto-nome { font-size: 18px; }
 
 /* chips da obra */

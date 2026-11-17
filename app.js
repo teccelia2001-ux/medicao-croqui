@@ -224,7 +224,9 @@
   async function buscarRemotas(avisando = false) {
     if (!navigator.onLine || !Nuvem.lerSessao()) return;
     try {
-      const lista = await Nuvem.listarObras();
+      // obra excluída que ainda não saiu do banco (sem sinal na hora) não volta para a lista
+      const saindo = new Set(await Banco.ler("exclusoes", []));
+      const lista = (await Nuvem.listarObras()).filter((r) => !saindo.has(r.id));
       estado.remotas = lista;
       estado.remotasEm = Date.now();
       // obra parada no aparelho e mais nova no banco: traz a versão do banco
@@ -467,7 +469,7 @@
         id: o.id, numero: o.numero, cidade: o.municipio || o.local || "", total: t.valor,
         pontos: M.pontosReais(o.pontos).length, fotos: o.pontos.reduce((n, p) => n + p.fotos.length, 0), croqui: !!o.projeto,
         atualizada_em: o.atualizada_em, supervisor: soLeitura(o) ? o.supervisor_nome || r?.supervisor_nome : estado.perfil?.nome,
-        selo: seloHtml(o),
+        selo: seloHtml(o), meu: !soLeitura(o),
       };
     });
     const locais = new Set(estado.obras.map((o) => o.id));
@@ -475,11 +477,28 @@
       if (locais.has(r.id)) continue;
       lista.push({
         id: r.id, numero: r.numero, cidade: r.municipio || r.local || "", total: Number(r.total), pontos: r.qtd_pontos,
-        fotos: null, atualizada_em: r.atualizada_em, supervisor: r.supervisor_nome,
+        fotos: null, atualizada_em: r.atualizada_em, supervisor: r.supervisor_nome, meu: r.supervisor_id === meu,
         selo: r.supervisor_id === meu ? `<span class="selo selo-ok">✓ No banco</span>` : `<span class="selo selo-consulta">Consulta</span>`,
       });
     }
     return lista.sort((a, b) => (b.atualizada_em || "").localeCompare(a.atualizada_em || ""));
+  }
+
+  /** Exclui a obra do celular e põe na fila para sair do banco, depois de confirmar.
+   *  Vale para a obra aberta e para a do cartão (mesmo a que só está no banco). */
+  async function excluirObra(id, numero, pontos) {
+    if (!confirm(`Excluir a obra ${numero}? Pontos e serviços serão apagados deste celular e do banco, e não dá para desfazer. As fotos continuam guardadas no celular e no banco.`)) return false;
+    if (pontos && !confirm(`Tem certeza? A obra ${numero} tem ${plural(pontos, "ponto", "pontos")}. Se ainda não gerou a medição, os serviços lançados serão perdidos.`)) return false;
+    await Banco.excluirObra(id);
+    // sempre entra na fila: além de tirar a obra do banco, sobe as fotos que faltam
+    const exclusoes = await Banco.ler("exclusoes", []);
+    if (!exclusoes.includes(id)) exclusoes.push(id);
+    await Banco.gravar("exclusoes", exclusoes);
+    estado.obras = estado.obras.filter((x) => x.id !== id);
+    if (estado.remotas) estado.remotas = estado.remotas.filter((r) => r.id !== id);
+    avisar("Obra excluída.");
+    enviarDepois(500);
+    return true;
   }
 
   function telaInicio() {
@@ -489,12 +508,12 @@
     const vistas = termos.length
       ? todas.filter((o) => termos.every((t) => normalizar(`${o.numero} ${o.cidade} ${o.supervisor || ""}`).includes(t)))
       : todas;
-    const cartao = (o) => `<button type="button" class="cartao obra-item" data-acao="abrir-obra" data-id="${o.id}">
+    const cartao = (o) => `<div class="obra-cartao${o.meu ? " com-lixo" : ""}"><button type="button" class="cartao obra-item" data-acao="abrir-obra" data-id="${o.id}">
         <div class="linha-topo"><span class="chip-obra"><small>OBRA</small><b>${esc(o.numero)}</b></span><b class="valor">${M.fmtMoeda(o.total)}</b></div>
         ${o.cidade ? `<p class="sub">${esc(o.cidade)}</p>` : ""}
         <small class="sub">${o.croqui ? "🗺 " : ""}${plural(o.pontos, "ponto", "pontos")}${o.fotos != null ? " · " + plural(o.fotos, "foto", "fotos") : ""}${o.supervisor ? " · " + esc(o.supervisor) : ""}</small>
         <div class="linha-topo">${o.selo}<small class="sub">alterada ${M.fmtHora(o.atualizada_em)}</small></div>
-      </button>`;
+      </button>${o.meu ? `<button type="button" class="obra-lixo" data-acao="excluir-obra-lista" data-id="${o.id}" aria-label="Excluir a obra ${esc(o.numero)}" title="Excluir obra">🗑</button>` : ""}</div>`;
     return `<div class="pagina pagina-larga">
       ${topo("", null, `<nav class="troca" aria-label="Trocar entre app e painel"><span class="ativo">📱 App</span><a href="painel.html">📊 Painel</a></nav><button type="button" class="link link-ajustes${estado.novaVersao ? " novidade" : ""}" data-acao="config" aria-label="Ajustes">⚙<span> Ajustes</span></button>`)}
       ${!estado.online ? `<div class="faixa faixa-guardado">Sem internet: aparecem só as obras guardadas no celular. O que você lançar sobe para o banco quando o sinal voltar.</div>`
@@ -2428,19 +2447,15 @@
           estado.obra = null;
           return irPara("inicio");
         }
-        if (!confirm(`Excluir a obra ${o.numero}? Pontos e serviços serão apagados deste celular e do banco, e não dá para desfazer. As fotos continuam guardadas no celular e no banco.`)) return;
-        if (o.pontos.length && !confirm("Tem certeza? Se ainda não gerou a medição, os serviços lançados serão perdidos.")) return;
-        await Banco.excluirObra(o.id);
-        {
-          // sempre entra na fila: além de tirar a obra do banco, sobe as fotos que faltam
-          const exclusoes = await Banco.ler("exclusoes", []);
-          if (!exclusoes.includes(o.id)) exclusoes.push(o.id);
-          await Banco.gravar("exclusoes", exclusoes);
-        }
+        if (!(await excluirObra(o.id, o.numero, o.pontos.length))) return;
         estado.obra = null;
-        avisar("Obra excluída.");
-        enviarDepois(500);
         return irPara("inicio");
+      }
+      case "excluir-obra-lista": { // botão 🗑 do cartão na lista de obras
+        const item = obrasDaLista().find((x) => x.id === alvo.dataset.id);
+        if (!item?.meu) return;
+        if (await excluirObra(item.id, item.numero, item.pontos || 0)) render();
+        return;
       }
       case "gps": return marcarGps();
       case "escolher": {
