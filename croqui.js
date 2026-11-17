@@ -769,11 +769,15 @@
         if (!achou) continue;
         const v = votos.get(achou.nome) || { ...achou, n: 0 };
         v.n++;
+        v.comP = v.comP || achou.comP;
+        v.perto = Math.min(v.perto ?? 1, achou.perto ?? 1);
         votos.set(achou.nome, v);
         if (v.n >= 2) break; // dois iguais: decidido
       }
       const melhor = [...votos.values()].sort((a, b) => b.n - a.n)[0];
-      return melhor ? { nome: melhor.nome, texto: melhor.texto } : null;
+      // comP: o "P" apareceu na leitura (sem ele pode ser um símbolo verde do desenho)
+      // perto: distância do rótulo lido ao toque (fração do recorte)
+      return melhor ? { nome: melhor.nome, texto: melhor.texto, comP: !!melhor.comP, perto: melhor.perto ?? 1 } : null;
     });
   }
 
@@ -787,12 +791,16 @@
   async function lerPosteEm(proj, pos, px) {
     const w = await prepararLeitura();
     const im = await imagem(proj, { pag: pos.pag || 1, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.12, proporcao: 2 } });
-    // projeto torto, em pé ou de cabeça para baixo: endireita e tenta cada ângulo até achar
+    // projeto torto, em pé ou de cabeça para baixo: endireita e tenta cada ângulo até achar.
+    // Vale de cara só a leitura com o "P" na frente do número: de cabeça para baixo o
+    // "(P68)" vira "(89d)" e, sem o P, saía "P89" (o 6 vira 9 e a ordem inverte)
+    let reserva = null;
     for (const ang of await angulosDe(proj, pos.pag || 1, im.cv)) {
       const achou = await lerPosteGirado(w, ang ? girar(im.cv, ang) : im.cv);
-      if (achou) return achou;
+      if (achou?.comP) return { nome: achou.nome, texto: achou.texto, comP: true, perto: achou.perto };
+      if (achou?.nome && !achou.virado && !reserva) reserva = { nome: achou.nome, texto: achou.texto, comP: false, perto: achou.perto };
     }
-    return null;
+    return reserva;
   }
   async function lerPosteGirado(w, colorido) {
     const im = { w: colorido.width, h: colorido.height };
@@ -809,33 +817,41 @@
       px[i] = px[i + 1] = px[i + 2] = verde ? 0 : 255;
     }
     pctx.putImageData(dados, 0, 0);
-    // só os caracteres de um "(P12)": o OCR não troca 5 por S ou 6 por 8 tão fácil
-    await w.setParameters({ tessedit_char_whitelist: "()P0123456789" });
+    // só os caracteres de um "(P12)": o OCR não troca 5 por S ou 6 por 8 tão fácil.
+    // O "d" é o P de cabeça para baixo: denuncia que o ângulo está invertido
+    await w.setParameters({ tessedit_char_whitelist: "()P0123456789d" });
     let data;
     try {
       ({ data } = await w.recognize(pb, {}, { blocks: true }));
     } finally {
       await w.setParameters({ tessedit_char_whitelist: "" });
     }
-    let melhor = null;
+    let melhor = null, virado = false;
     for (const b of data.blocks || []) {
       for (const par of b.paragraphs) {
         for (const linha of par.lines) {
           for (const pal of linha.words) {
+            const bruto = pal.text.trim().replace(/[,;:|]+$/, "");
+            // "(89d)": rótulo de cabeça para baixo neste ângulo, não é o número
+            if (/^\(?\d{1,3}d\)?$/.test(bruto)) { virado = true; continue; }
             // o ponto é identificado só pelo "(P2)" VERDE do projeto (supervisor, 17/11/2026):
             // o F.P2 azul não vale, nem o "(P1)" vermelho/cinza das notas
-            const m = APELIDO.exec(pal.text.trim().toUpperCase().replace(/[,;:|]+$/, ""));
+            const m = APELIDO.exec(bruto.replace(/d/g, "").toUpperCase());
             if (!m || !/[()]/.test(pal.text)) continue;
             const num = m[1].replace(/[LI]/g, "1").replace(/O/g, "0");
             if (!/^\d+$/.test(num)) continue;
             const { x0, x1, y0, y1 } = pal.bbox;
             const d = Math.hypot((x0 + x1) / 2 - im.w / 2, (y0 + y1) / 2 - im.h / 2);
-            if (!melhor || d < melhor.d) melhor = { nome: "P" + Number(num), texto: `(P${Number(num)})`, d };
+            const comP = /P\d/.test(bruto);
+            // o com P na frente vale mais que um sem P mais perto do toque
+            if (!melhor || (comP && !melhor.comP) || (comP === melhor.comP && d < melhor.d)) {
+              melhor = { nome: "P" + Number(num), texto: `(P${Number(num)})`, d, comP };
+            }
           }
         }
       }
     }
-    return melhor && { nome: melhor.nome, texto: melhor.texto };
+    return melhor ? { nome: melhor.nome, texto: melhor.texto, comP: melhor.comP, virado, perto: melhor.d / Math.max(im.w, im.h) } : virado ? { virado: true } : null;
   }
 
   // "(P2)" verde do projeto (o OCR às vezes perde um parêntese ou o P: "(P2", "2)")
@@ -1307,6 +1323,9 @@
     };
   }
 
+  // leitura na borda do recorte: um rótulo vizinho cortado pela metade ("(P1" do (P157)).
+  // Mais perto que isso vale: às vezes quem acha o (P163) é um grupo verde ao lado dele
+  const PERTO_DO_GRUPO = 0.4;
   /** Todos os pontos do projeto numa folha: os "(P2)" verdes. Acha os textos verdes pela cor
    *  (rápido, sem OCR), lê cada um com `lerPoste` (endireita em qualquer posição) e fica com
    *  os que são (P). `aoAndar(feitos, total)` conta o progresso.
@@ -1362,7 +1381,9 @@
     for (const [i, g] of grupos.entries()) {
       aoAndar(i, grupos.length);
       const r = await lerPoste(proj, { pag, x: g.x, y: g.y });
-      if (r?.nome) achados.push({ nome: r.nome, pag, x: g.x, y: g.y });
+      // num círculo ou símbolo verde o OCR acaba lendo um (P) vizinho cortado na borda
+      if (window.CROQUI_DEPURAR && r) (window.CROQUI_PERTO = window.CROQUI_PERTO || []).push(`${r.nome}@${g.x.toFixed(3)},${g.y.toFixed(3)} ${r.perto.toFixed(3)}`);
+      if (r?.nome && r.perto <= PERTO_DO_GRUPO) achados.push({ nome: r.nome, pag, x: g.x, y: g.y, comP: r.comP });
     }
     aoAndar(grupos.length, grupos.length);
     // o mesmo nome duas vezes (o (P6) do "DETALHE A" e o da rua): fica o que está junto dos
@@ -1373,18 +1394,67 @@
       const ja = unicos.get(p.nome);
       if (!ja || pertoDosOutros(p) < pertoDosOutros(ja)) unicos.set(p.nome, p);
     }
-    // número fora da sequência ("P35" com 8 pontos na folha): o OCR pôs um dígito a mais na
-    // frente; se tirando ele sobra um número que falta (5), é esse
-    const lista = [...unicos.values()];
-    const usados = new Set(lista.map((p) => Number(p.nome.slice(1))));
-    const limite = Math.max(grupos.length, lista.length) * 2 + 5;
+    return corrigirNumeros([...unicos.values()]);
+  }
+
+  /** Acerta os números que o OCR leu errado comparando com os outros pontos da folha. */
+  function corrigirNumeros(lista) {
+    // número fora da sequência ("P35" numa folha de P1 a P8): o OCR pôs um dígito a mais na
+    // frente; se tirando ele sobra um número que falta e cabe na faixa dos outros (5), é esse.
+    // Projeto grande continua a numeração (P31 a P45 numa folha): aí o número fica como está
+    const numeros = lista.map((p) => Number(p.nome.slice(1)));
+    const usados = new Set(numeros);
+    const folga = lista.length + 3;
+    const ordem = [...numeros].sort((a, b) => a - b), mediana = ordem[ordem.length >> 1] || 0;
+    // baixo: bem abaixo da folha e com menos algarismos (P75 entre P158 e P186) ou menos de
+    // um terço do meio dela (P13 entre P81 e P106)
+    const baixo = (n) => (String(n).length < String(mediana).length || n < mediana / 3) && n < mediana - folga;
+    // o dígito da frente sumiu ("(P64)" lido "P4" ao lado do P61 e do P62; "(P113)" lido "P13"
+    // ao lado do P105 e do P106): só quando são 1 ou 2 soltos na folha. Vários juntos (P1 a
+    // P6 numa folha que também tem P27 a P30) são pontos de verdade
+    let baixos = lista.filter((p) => baixo(Number(p.nome.slice(1))));
+    // número de 3 algarismos: o OCR quase sempre perde o "1" colado no P ("(P117)" → "P17").
+    // Dois algarismos bem abaixo da folha e o 1xx cabe na faixa dos outros: é o 1xx
+    const altos = numeros.filter((n) => !baixo(n));
+    if (altos.length >= 3) {
+      const aLo = Math.min(...altos), aHi = Math.max(...altos);
+      for (const p of baixos) {
+        const n = Number(p.nome.slice(1)), c = 100 + n;
+        if (p.comP !== false && n >= 10 && n < 100 && !usados.has(c) && c >= aLo - folga && c <= aHi + folga) { usados.delete(n); usados.add(c); p.nome = `P${c}`; }
+      }
+      baixos = lista.filter((p) => baixo(Number(p.nome.slice(1))));
+    }
+    const descartar = new Set();
+    if (baixos.length <= 2 && baixos.length <= lista.length * 0.15) {
+      for (const p of baixos) {
+        const n = Number(p.nome.slice(1));
+        // lido sem o "P": é um símbolo verde do desenho (círculo, texto), não um rótulo
+        if (p.comP === false) { descartar.add(p); continue; }
+        const viz = lista.filter((q) => !baixos.includes(q))
+          .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y)).slice(0, 2)
+          .map((q) => Number(q.nome.slice(1)));
+        if (viz.length < 2 || Math.abs(viz[0] - viz[1]) > 10) continue; // vizinhos não concordam
+        // os números a até 10 dos vizinhos que terminam ou começam com o que foi lido
+        // ("P8" → 108 ao lado do P105 e do P106; "(P226)" lido "P2" → 226)
+        const ref = (viz[0] + viz[1]) / 2, fim = String(n);
+        const cabe = [];
+        for (let c = Math.max(n + 1, Math.ceil(ref - 10)); c <= ref + 10; c++) {
+          if ((String(c).endsWith(fim) || String(c).startsWith(fim)) && !usados.has(c)) cabe.push(c);
+        }
+        cabe.sort((a, b) => Math.abs(a - ref) - Math.abs(b - ref));
+        if (cabe.length && Math.abs(cabe[0] - ref) <= 10) { usados.delete(n); usados.add(cabe[0]); p.nome = `P${cabe[0]}`; }
+      }
+    }
     for (const p of lista) {
       const n = Number(p.nome.slice(1));
-      if (n <= limite) continue;
+      const outros = numeros.filter((x) => x !== n);
+      if (outros.length < 3) continue;
+      const lo = Math.min(...outros), hi = Math.max(...outros);
+      if (n <= hi + folga) continue; // perto dos outros: é da sequência
       const sem = Number(String(n).slice(1));
-      if (sem && !usados.has(sem)) { usados.delete(n); usados.add(sem); p.nome = `P${sem}`; }
+      if (sem && !usados.has(sem) && sem >= lo - folga && sem <= hi + folga) { usados.delete(n); usados.add(sem); p.nome = `P${sem}`; }
     }
-    return lista;
+    return lista.filter((p) => !descartar.has(p));
   }
 
   // ------------------------------------------------------------------ vários croquis numa obra
@@ -1440,5 +1510,5 @@
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, acharPontos, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();

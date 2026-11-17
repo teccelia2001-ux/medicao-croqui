@@ -1353,7 +1353,7 @@
 
   // leitura feita uma vez por lugar do ponto e guardada no aparelho: abrir o ponto de novo
   // (até em outro dia) não lê o projeto outra vez. Mudou o leitor → sobe LEITURA e lê de novo.
-  const LEITURA = 23;
+  const LEITURA = 24;
   const lidosProjeto = new Map();
   // pelo lugar (pode começar no toque do croqui, antes de o ponto existir)
   const chaveLido = (o, croqui) => `${LEITURA}|${o.id}|${o.projeto?.em}|${croqui.pag || 1}|${croqui.x}|${croqui.y}`;
