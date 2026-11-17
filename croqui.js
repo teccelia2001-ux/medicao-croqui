@@ -739,9 +739,6 @@
     return leitor;
   }
 
-  // "F.P1", "P.12", "P7" → número do poste (o OCR às vezes troca 1 por l/I e 0 por O
-  // e às vezes perde o ponto: "FP3")
-  const ROTULO_POSTE = /^(?:[A-Z]{1,3}\.?)?P\.?([0-9LIO]{1,4})$/;
 
   /** Preto no branco: o rótulo é azul/vermelho/verde; o OCR lê bem melhor sem cor. */
   function pretoBranco(cv) {
@@ -779,35 +776,57 @@
   async function lerPosteEm(proj, pos, px) {
     const w = await prepararLeitura();
     const im = await imagem(proj, { pag: pos.pag || 1, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.12, proporcao: 2 } });
-    // projeto escrito torto (acompanhando a rua): endireita antes de ler
-    const ang = inclinacao(im.cv);
-    const { data } = await w.recognize(pretoBranco(Math.abs(ang) >= 1 ? girar(im.cv, ang) : im.cv), {}, { blocks: true });
+    // projeto torto, em pé ou de cabeça para baixo: endireita e tenta cada ângulo até achar
+    for (const ang of await angulosDe(proj, pos.pag || 1, im.cv)) {
+      const achou = await lerPosteGirado(w, ang ? girar(im.cv, ang) : im.cv);
+      if (achou) return achou;
+    }
+    return null;
+  }
+  async function lerPosteGirado(w, colorido) {
+    const im = { w: colorido.width, h: colorido.height };
+    const pb = document.createElement("canvas");
+    pb.width = colorido.width;
+    pb.height = colorido.height;
+    pb.getContext("2d").drawImage(colorido, 0, 0);
+    const { data } = await w.recognize(pretoBranco(pb), {}, { blocks: true });
     let melhor = null;
     for (const b of data.blocks || []) {
       for (const par of b.paragraphs) {
         for (const linha of par.lines) {
-          linha.words.forEach((pal, k) => {
-            // "(P1)" das notas do projeto não é o nome do poste: só a palavra sozinha vale
-            const texto = pal.text.trim().toUpperCase().replace(/[,;:|]+$/, "");
-            const m = ROTULO_POSTE.exec(texto);
-            if (!m || pal.confidence < 25) return;
+          for (const pal of linha.words) {
+            // o ponto é identificado só pelo "(P2)" VERDE do projeto (supervisor, 17/11/2026):
+            // o F.P2 azul não vale, nem o "(P1)" vermelho/cinza das notas
+            const m = APELIDO.exec(pal.text.trim().toUpperCase().replace(/[,;:|]+$/, ""));
+            if (!m || !/[()]/.test(pal.text) || corEm(colorido, pal.bbox) !== "verde") continue;
             const num = m[1].replace(/[LI]/g, "1").replace(/O/g, "0");
+            if (!/^\d+$/.test(num)) continue;
             const { x0, x1, y0, y1 } = pal.bbox;
-            // o rótulo com prefixo (F.P1) ganha de um "P1" solto perto do toque
-            const d = Math.hypot((x0 + x1) / 2 - im.w / 2, (y0 + y1) / 2 - im.h / 2) + (texto.startsWith("P") ? im.w / 4 : 0);
-            if (melhor && d >= melhor.d) return;
-            // o "(P1)" verde logo antes do F.P2 é o que identifica o ponto: o nome vem dele
-            // (o OCR às vezes perde um dos parênteses ou o P: "(P1", "1)")
-            const ant = k > 0 ? /^(?:\(P?([0-9LIO]{1,3})\)?|P?([0-9LIO]{1,3})\))$/.exec(linha.words[k - 1].text.trim().toUpperCase()) : null;
-            const apelido = ant ? (ant[1] || ant[2]).replace(/[LI]/g, "1").replace(/O/g, "0") : "";
-            melhor = apelido && /^\d+$/.test(apelido)
-              ? { nome: "P" + apelido, texto: `(P${apelido}) ${texto}`, d }
-              : { nome: "P" + num, texto, d };
-          });
+            const d = Math.hypot((x0 + x1) / 2 - im.w / 2, (y0 + y1) / 2 - im.h / 2);
+            if (!melhor || d < melhor.d) melhor = { nome: "P" + Number(num), texto: `(P${Number(num)})`, d };
+          }
         }
       }
     }
     return melhor && { nome: melhor.nome, texto: melhor.texto };
+  }
+
+  // "(P2)" verde do projeto (o OCR às vezes perde um parêntese ou o P: "(P2", "2)")
+  const APELIDO = /^\(?P?([0-9LIO]{1,3})\)?$/;
+
+  /** cor que mais aparece na tinta do retângulo `b` de um canvas colorido */
+  function corEm(cv, b) {
+    const x0 = Math.max(0, Math.floor(b.x0)), y0 = Math.max(0, Math.floor(b.y0));
+    const w = Math.min(cv.width, Math.ceil(b.x1)) - x0, h = Math.min(cv.height, Math.ceil(b.y1)) - y0;
+    if (w <= 0 || h <= 0) return "";
+    const d = cv.getContext("2d").getImageData(x0, y0, w, h).data;
+    const n = { vermelho: 0, cinza: 0, preto: 0, azul: 0, verde: 0 };
+    for (let i = 0; i < d.length; i += 4) {
+      if (Math.min(d[i], d[i + 1], d[i + 2]) >= 170) continue;
+      const c = corPixel(d[i], d[i + 1], d[i + 2]);
+      if (c) n[c]++;
+    }
+    return Object.entries(n).sort((a, c) => c[1] - a[1])[0][0];
   }
 
   // ------------------------------------------------------------------ serviços escritos no projeto
@@ -924,15 +943,13 @@
     return linhas;
   }
 
-  // só rótulo com prefixo (F.P2, F.P): "P 120" do vão do cabo não é poste
-  // ("F.P2", "FP3", "F.P" sem o número lido; "CAMPO" não: precisa de número de verdade ou do ponto)
-  const ehRotulo = (t) => /^[A-Z]{1,3}(?:\.?P\.?\d[\dLIO]{0,3}|\.P)$/.test(t) && !t.startsWith("P");
   const limparLinha = (t) => t.replace(/[[\]|~“”"‘’_]+/g, " ").replace(/\s+/g, " ").trim();
 
   /** O que o projeto escreve no poste mais perto de `pos`:
    *  { poste: "F.P2", apelido: "(P1)", linhas: [{ texto, cor, riscada }] } ou null. */
-  function lerProjeto(proj, pos) {
-    return naFila(() => lerProjetoAgora(proj, pos));
+  /** `nome`: o nome do ponto (P2), quando ele foi criado tocando no "(P2)" do projeto */
+  function lerProjeto(proj, pos, nome = "") {
+    return naFila(() => lerProjetoAgora(proj, pos, /^P\d+$/.test(nome) ? nome : ""));
   }
 
   /** Quantidade que o OCR leu errado por causa da caixa: "OCF" (9CF = 9 chaves faca) ou
@@ -976,31 +993,33 @@
    *  acompanhando a rua. As bordas retas das caixas servem de régua: o ângulo em que elas
    *  ficam deitadas é o que dá mais traços horizontais compridos. */
   function inclinacao(cv) {
-    const f = 3, w = Math.round(cv.width / f), h = Math.round(cv.height / f), L = Math.round(w * 0.04);
+    // em toda a volta (deitado, em pé, na diagonal): a reta deitada tanto faz para que lado,
+    // então basta de -90° a +90°; de cabeça para baixo (+180°) quem decide é a leitura
+    const f = 4, w = Math.round(cv.width / f), h = Math.round(cv.height / f), L = Math.round(Math.min(w, h) * 0.05);
+    const lado = Math.ceil(Math.hypot(w, h)); // girado não perde os cantos
     const pequeno = document.createElement("canvas");
     pequeno.width = w;
     pequeno.height = h;
     pequeno.getContext("2d").drawImage(cv, 0, 0, w, h);
     const giro = document.createElement("canvas");
-    giro.width = w;
-    giro.height = h;
+    giro.width = lado;
+    giro.height = lado;
     const gc = giro.getContext("2d", { willReadFrequently: true });
     const medir = (ang, soVermelho) => {
       gc.setTransform(1, 0, 0, 1, 0, 0);
       gc.fillStyle = "#fff";
-      gc.fillRect(0, 0, w, h);
-      gc.translate(w / 2, h / 2);
+      gc.fillRect(0, 0, lado, lado);
+      gc.translate(lado / 2, lado / 2);
       gc.rotate((-ang * Math.PI) / 180);
-      gc.translate(-w / 2, -h / 2);
-      gc.drawImage(pequeno, 0, 0);
-      const d = gc.getImageData(0, 0, w, h).data;
+      gc.drawImage(pequeno, -w / 2, -h / 2);
+      const d = gc.getImageData(0, 0, lado, lado).data;
       let total = 0;
-      for (let y = 0; y < h; y++) {
+      for (let y = 0; y < lado; y++) {
         let corrida = 0;
-        for (let x = 0; x <= w; x++) {
+        for (let x = 0; x <= lado; x++) {
           let on = false;
-          if (x < w) {
-            const i = (y * w + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
+          if (x < lado) {
+            const i = (y * lado + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
             on = Math.min(r, g, b) < 170 && (!soVermelho || (r > g + 60 && r > b + 60));
           }
           if (on) corrida++;
@@ -1009,63 +1028,121 @@
       }
       return total;
     };
+    // de 3 em 3 graus, os mais perto do reto primeiro (empate fica com o mais reto)
+    const grossos = [0];
+    for (let a = 3; a < 90; a += 3) grossos.push(a, -a);
+    grossos.push(90);
     // primeiro pelas caixas vermelhas; sem elas, por todo o desenho
     for (const soVermelho of [true, false]) {
-      let melhor = { ang: 0, v: medir(0, soVermelho) };
-      for (let a = -10; a <= 10; a++) {
-        if (!a) continue;
+      let melhor = null;
+      for (const a of grossos) {
         const v = medir(a, soVermelho);
-        if (v > melhor.v * 1.05) melhor = { ang: a, v };
+        if (!melhor || v > melhor.v * 1.05) melhor = { ang: a, v };
       }
       if (melhor.v > L * L * 4) {
-        // afina de quarto em quarto de grau em volta do melhor
-        const ini = melhor.ang;
-        for (let a = ini - 0.75; a <= ini + 0.75; a += 0.25) {
-          if (a === ini) continue;
-          const v = medir(a, soVermelho);
-          if (v > melhor.v) melhor = { ang: a, v };
+        // afina em volta do melhor: meio grau e depois quarto de grau
+        for (const passo of [0.5, 0.25]) {
+          const ini = melhor.ang;
+          for (let a = ini - passo * 3; a <= ini + passo * 3; a += passo) {
+            if (a === ini) continue;
+            const v = medir(a, soVermelho);
+            if (v > melhor.v) melhor = { ang: a, v };
+          }
         }
-        return melhor.ang;
+        return melhor.ang > 90 ? melhor.ang - 180 : melhor.ang <= -90 ? melhor.ang + 180 : melhor.ang;
       }
     }
     return 0;
   }
 
-  /** o recorte girado em volta do meio, para deixar o texto deitado */
+  /** Inclinação da folha inteira (uma vez por projeto): o projeto costuma ser todo torto do
+   *  mesmo jeito, e num recorte com pouca caixa a régua sai errada. */
+  const inclinacoesDaFolha = new Map();
+  function inclinacaoDaFolha(proj, pag) {
+    const k = `${chaveDe(proj)}|${pag}`;
+    if (!inclinacoesDaFolha.has(k)) {
+      inclinacoesDaFolha.set(k, imagem(proj, { pag, px: 2400, canvas: true }).then((im) => inclinacao(im.cv)).catch(() => 0));
+    }
+    return inclinacoesDaFolha.get(k);
+  }
+  /** ângulos para tentar a leitura, na ordem: o do recorte, o da folha, reto, e cada um
+   *  deles de cabeça para baixo (+180°) */
+  async function angulosDe(proj, pag, cv) {
+    const lista = [];
+    const por = (a) => {
+      let v = Math.abs(a) < 1 ? 0 : a;
+      if (v > 180) v -= 360;
+      if (v <= -180) v += 360;
+      if (!lista.some((x) => Math.abs(x - v) < 0.75)) lista.push(v);
+    };
+    // o do recorte primeiro (é o do texto em volta do ponto); o da folha ajuda quando o
+    // recorte tem pouca caixa para servir de régua
+    const base = [inclinacao(cv), await inclinacaoDaFolha(proj, pag), 0];
+    base.forEach(por);
+    base.forEach((a) => por((Math.abs(a) < 1 ? 0 : a) + 180));
+    return lista;
+  }
+
+  // o que se escreve num projeto: poste, estrutura, chave, transformador e as palavras dos serviços
+  const VOCABULARIO = new RegExp([
+    String.raw`D?T\s?\d{1,2}\s?[/1]\s?\d{3,4}`, String.raw`\b\d{1,2}\s?-\s?[A-Z]{1,3}\d[A-Z]?\b`,
+    String.raw`\b\d{1,2}\s?-\s?\d{2,3}\s?A\b`, String.raw`\b\d{1,2}\s?CF\b`, String.raw`\bTR\s?-?\s?\d\s?-?\s?\d+\s?KVA`,
+    String.raw`\b(ATERRAMENTO|TEMPORARIO|RELIGADOR|DEFENSA|LINHA|VIVA|INST|ISOL|SUSPENSAO|APROVEITAR|TRAFO|TRANSFORMADOR|CHAVE|CRUZETA|ESTAI|POSTE|ABRIR|RETIRAR|INSTALAR)\b`,
+  ].join("|"), "g");
+  const pontosDoTexto = (t) => {
+    const s = t.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+    return [...s.matchAll(VOCABULARIO)].reduce((n, m) => n + m[0].replace(/\s/g, "").length, 0);
+  };
+
+  /** o recorte girado em volta do meio, para deixar o texto deitado (a tela cresce para
+   *  caber o recorte inteiro girado: em pé ou na diagonal não perde nada) */
   function girar(cv, ang) {
+    const rad = (-ang * Math.PI) / 180, cos = Math.abs(Math.cos(rad)), sin = Math.abs(Math.sin(rad));
     const c = document.createElement("canvas");
-    c.width = cv.width;
-    c.height = cv.height;
+    c.width = Math.ceil(cv.width * cos + cv.height * sin);
+    c.height = Math.ceil(cv.width * sin + cv.height * cos);
     const ctx = c.getContext("2d");
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, c.width, c.height);
     ctx.translate(c.width / 2, c.height / 2);
-    ctx.rotate((-ang * Math.PI) / 180);
-    ctx.translate(-c.width / 2, -c.height / 2);
-    ctx.drawImage(cv, 0, 0);
+    ctx.rotate(rad);
+    ctx.drawImage(cv, -cv.width / 2, -cv.height / 2);
     return c;
   }
 
-  async function lerProjetoAgora(proj, pos) {
+  async function lerProjetoAgora(proj, pos, nome) {
     const w = await prepararLeitura();
-    const im = await imagem(proj, { pag: pos.pag || 1, px: 1700, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.3, proporcao: 1.4 } });
+    // recorte quadrado: com o projeto em pé (90°) o texto corre na vertical e precisa da
+    // mesma folga para cima e para baixo que teria para os lados
+    const im = await imagem(proj, { pag: pos.pag || 1, px: 1700, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.3, proporcao: 1 } });
     // texto torto: lê também com o recorte endireitado (girado em volta do meio, que é o
     // ponto tocado). Pode ter caixa reta e torta juntas: fica a leitura que achou mais
     // texto deste poste.
-    const ang = inclinacao(im.cv);
-    const angulos = Math.abs(ang) >= 1 ? [ang, 0] : [0];
+    const angulos = window.CROQUI_ANGULOS || (await angulosDe(proj, pos.pag || 1, im.cv)); // (CROQUI_ANGULOS: só para teste)
+    if (window.CROQUI_DEPURAR) window.CROQUI_ANG = angulos;
     let melhor = null;
     for (const a of angulos) {
-      const r = await analisar(w, a ? girar(im.cv, a) : im.cv);
-      const pontos = r ? 10 + r.linhas.reduce((s, l) => s + l.texto.replace(/[^A-Z0-9]/g, "").length, 0) : 0;
-      if (!melhor || pontos > melhor.pontos) melhor = { r, pontos };
-      if (r?.linhas.length) break; // achou o poste e o que ele pede: não precisa ler reto
+      const r = await analisar(w, a ? girar(im.cv, a) : im.cv, nome);
+      // vale a leitura com o (P) mais perto do ponto tocado e o texto mais bem lido: de cabeça
+      // para baixo o OCR acha "letras", mas com pouca confiança
+      // vale pelo que dá para reconhecer do projeto (DT11/1000, 1-CE3, 3-100A, ATERRAMENTO,
+      // INST...): de cabeça para baixo ou picado ("ATERRAME" + "NTO") quase não pontua. A
+      // confiança do OCR sozinha engana (dá 92 para um pedaço e 37 para a palavra certa).
+      const nota = r ? r.linhas.reduce((s, l) => s + pontosDoTexto(l.texto), 0) - (r.distancia / (im.w * 0.05)) * 3 : -Infinity;
+      const conf = r?.linhas.length ? r.linhas.reduce((s, l) => s + l.conf, 0) / r.linhas.length : 0;
+      if (window.CROQUI_DEPURAR) (window.CROQUI_NOTAS = window.CROQUI_NOTAS || []).push({ a, nota: Math.round(nota), conf: Math.round(conf), dist: r && Math.round(r.distancia), linhas: r && r.linhas.map((l) => `${l.texto} (${Math.round(l.conf)})`) });
+      if (!melhor || nota > melhor.nota) melhor = { r, nota };
+      if (r?.linhas.length && r.distancia < im.w * 0.06 && nota >= 30 && conf >= 50) break; // leitura boa e no ponto: basta
+    }
+    if (melhor.r) {
+      delete melhor.r.distancia;
+      melhor.r.linhas.forEach((l) => delete l.conf);
     }
     return melhor.r;
   }
 
   /** lê o recorte (já endireitado) e separa o que é do poste do meio dele */
-  async function analisar(w, base) {
+  async function analisar(w, base, nome = "") {
     const im = { w: base.width, h: base.height };
     const tudo = mascara(base);
     const verm = mascara(base, "vermelho"); // o vermelho sozinho sai mais limpo
@@ -1086,37 +1163,34 @@
       if (n && k >= 0) l.palavras[k] = { ...l.palavras[k], texto: l.palavras[k].texto.replace(/^\D*\d{1,3}/, n) };
     }
 
-    // rótulos dos postes (F.P2) e o "(P1)" verde de cada um, que as notas usam: na mesma
-    // linha, antes do F.P ("(P1) F.P2"), ou logo embaixo dele ("F.P6" / "(P6) DT11/1000")
-    const rotulos = [], apelidos = [];
-    const APELIDO = /^\(P?(\d{1,3})\)?$/;
+    // o ponto é identificado só pelo "(P2)" VERDE do projeto (supervisor, 17/11/2026): o F.P2
+    // azul não serve de referência, e o "(P1)" das notas é vermelho/cinza
+    const rotulos = [];
     for (const l of linhasTudo) {
-      l.palavras.forEach((p, k) => {
-        const ap = /^\(/.test(p.texto) || /\)$/.test(p.texto) ? APELIDO.exec(p.texto) : null;
-        if (ap) apelidos.push({ texto: `(P${ap[1]})`, bbox: p.bbox, linha: l, k });
-        if (!ehRotulo(p.texto.replace(/[,;:]+$/, ""))) return;
-        rotulos.push({ texto: p.texto, bbox: p.bbox, apelido: "", ancoras: [p.bbox], linha: l, k });
-      });
+      for (const p of l.palavras) {
+        const ap = /[()]/.test(p.texto) ? APELIDO.exec(p.texto) : null;
+        const num = ap && ap[1].replace(/[LI]/g, "1").replace(/O/g, "0");
+        if (!num || !/^\d+$/.test(num) || num.length > 2 || p.conf < 40 || corDaLinha(tudo, p.bbox).cor !== "verde") continue;
+        const texto = `(P${Number(num)})`;
+        rotulos.push({ texto, bbox: p.bbox, apelido: texto, ancoras: [p.bbox] });
+      }
     }
-    if (!rotulos.length) return null;
     const cx = im.w / 2, cy = im.h / 2;
     const centro = (b) => [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
-    for (const a of apelidos) {
-      const h = a.bbox.y1 - a.bbox.y0;
-      // na mesma linha, logo antes do F.P
-      let r = rotulos.find((x) => x.linha === a.linha && x.k === a.k + 1);
-      // ou o F.P logo acima dele
-      if (!r) {
-        let melhor = Infinity;
-        for (const x of rotulos) {
-          const dy = a.bbox.y0 - x.bbox.y1, dx = Math.abs(centro(x.bbox)[0] - centro(a.bbox)[0]);
-          if (dy > -h * 0.3 && dy < h * 1.5 && dx < h * 4 && dy + dx / 4 < melhor) { r = x; melhor = dy + dx / 4; }
-        }
-      }
-      if (r && !r.apelido) { r.apelido = a.texto; r.ancoras.push(a.bbox); }
-    }
     const longeDoMeio = (r) => Math.min(...r.ancoras.map((b) => Math.hypot(centro(b)[0] - cx, centro(b)[1] - cy)));
-    const nosso = rotulos.reduce((a, r) => (longeDoMeio(r) < longeDoMeio(a) ? r : a));
+    // o ponto já sabe o nome (P2, lido quando foi criado tocando no "(P2)"): se o OCR deste
+    // recorte maior não achou o (P2), ele está onde o ponto foi marcado, no meio do recorte
+    const alvo = nome ? `(${nome})` : "";
+    let nosso = alvo && rotulos.find((r) => r.texto === alvo && longeDoMeio(r) < im.w * 0.3);
+    if (!nosso && alvo && /^\(P\d+\)$/.test(alvo)) {
+      const hs = [...linhasTudo, ...linhasVerm].map((l) => l.bbox.y1 - l.bbox.y0).sort((a, b) => a - b);
+      const h = hs.length ? hs[hs.length >> 1] : im.w * 0.02;
+      nosso = { texto: alvo, apelido: alvo, bbox: { x0: cx - h * 1.5, y0: cy - h / 2, x1: cx + h * 1.5, y1: cy + h / 2 } };
+      nosso.ancoras = [nosso.bbox];
+      rotulos.push(nosso);
+    }
+    if (!rotulos.length) return null;
+    if (!nosso) nosso = rotulos.reduce((a, r) => (longeDoMeio(r) < longeDoMeio(a) ? r : a));
     // o rótulo do poste tocado não foi lido: não usa o de outro poste mais longe
     // (o ponto pode estar no poste, que fica a um palmo do rótulo; bem mais longe já é outro)
     if (longeDoMeio(nosso) > im.w * 0.3) return null;
@@ -1126,7 +1200,8 @@
     const guardar = (l, cor, riscada) => {
       const texto = limparLinha(l.palavras.map((p) => p.texto).join(" "));
       if (!/[A-Z]{3,}|\d+\s?-\s?[A-Z]{1,3}\d|\d{3,}/.test(texto)) return; // risco solto, pedaço de símbolo
-      linhas.push({ texto, cor, riscada, bbox: l.bbox, h: Math.max(8, l.bbox.y1 - l.bbox.y0) });
+      const conf = l.palavras.reduce((s, p) => s + (p.conf || 0), 0) / Math.max(1, l.palavras.length);
+      linhas.push({ texto, cor, riscada, conf, bbox: l.bbox, h: Math.max(8, l.bbox.y1 - l.bbox.y0) });
     };
     for (const l of linhasVerm) guardar(l, "vermelho", false);
     for (const l of linhasTudo) {
@@ -1160,7 +1235,9 @@
             // mesma faixa de altura (o rótulo às vezes fica meia linha acima da caixa)
             if (Math.abs(centro(a)[1] - ly) >= l.h * 1.2) continue;
             const esq = a.x0 - l.bbox.x1, dir = l.bbox.x0 - a.x1;
-            const vao = esq > -l.h && esq < l.h * 6 ? esq : dir > -l.h && dir < l.h * 3 ? dir : Infinity;
+            // à direita pode ter, no meio, o texto preto do que já existe ("(P2) DT11/600 1-BI9
+            // 1-RA2 1-B3 [1-B4]"): a caixa vermelha no fim da linha ainda é deste poste
+            const vao = esq > -l.h && esq < l.h * 6 ? esq : dir > -l.h && dir < l.h * 14 ? dir : Infinity;
             if (vao < folga) { dono = r; folga = vao; }
           }
         }
@@ -1177,8 +1254,8 @@
     const nossas = pilhas.filter((p) => donoDa(p) === nosso)
       .sort((a, b) => (a[0].cor === "vermelho" ? 0 : 1) - (b[0].cor === "vermelho" ? 0 : 1) || a[0].bbox.y0 - b[0].bbox.y0);
     return {
-      poste: nosso.texto, apelido: nosso.apelido,
-      linhas: nossas.flat().map(({ texto, cor, riscada }) => ({ texto, cor, riscada })),
+      poste: nosso.texto, apelido: nosso.apelido, distancia: longeDoMeio(nosso),
+      linhas: nossas.flat().map(({ texto, cor, riscada, conf }) => ({ texto, cor, riscada, conf })),
     };
   }
 

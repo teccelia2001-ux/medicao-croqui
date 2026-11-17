@@ -1104,6 +1104,8 @@
     [/\bCRUZETA\b/, "Cruzeta", (d) => /^CRUZETA/.test(d)],
     [/\bESTAI\b/, "Estai", (d) => /^ESTAI/.test(d)],
     [/\bCHAVE FUSIVEL\b/, "Chave fusível", (d) => /^CHAVE FUSIVEL <=/.test(d)],
+    // isolador de suspensão é o isolador bastão (supervisor, 17/11/2026)
+    [/\bISOL\w*\.?\s+(DE\s+)?SUSP|\bISOL\w*\.?\s+BAST/, "Isolador de suspensão (bastão)", (d) => /^ISOLADOR BASTAO/.test(d)],
   ];
 
   /** Serviços do catálogo que servem, de LM e de LV: o projeto é só sugestão, quem
@@ -1133,8 +1135,18 @@
     const deps = [LM, LV];
     const lista = [], outros = [];
     let operativo = "";
+    // a mesma caixa em duas linhas: "... E INST. 03" + "ISOL DE SUSPENSÃO" é uma frase só
+    const linhas = [];
     for (const l of lido.linhas) {
-      const t = MAIUSC(l.texto);
+      const ant = linhas[linhas.length - 1];
+      if (ant && ant.cor === l.cor && ant.riscada === l.riscada && /\b\d{1,2}$/.test(MAIUSC(ant.texto).trim()) && /^[A-Z]/.test(MAIUSC(l.texto).trim())) {
+        linhas[linhas.length - 1] = { ...ant, texto: `${ant.texto} ${l.texto}` };
+      } else linhas.push(l);
+    }
+    for (const l of linhas) {
+      // "APROVEITAR 1-B3": o que já está no poste e fica (não é serviço); o resto da frase
+      // ("E INST. 03 ...") continua valendo
+      const t = MAIUSC(l.texto).replace(/\bA?\s?P\s?ROVEIT\w*.*?(?=\bE\s+INST|\bINST|$)/, " ");
       if (/LINHA\s*VIVA/.test(t)) { outros.push("LINHA VIVA"); continue; }
       // número sozinho no alto da pilha (118106): número operativo do equipamento
       if (/^\d{5,7}$/.test(t.trim())) { operativo = operativo || t.trim(); continue; }
@@ -1182,7 +1194,13 @@
         const kva = Number(tr[2].replace(",", "."));
         por(`Transformador ${tr[1]}F ${tr[2]} kVA`, "1", (d) => d.startsWith(`TRANSFORMADOR DISTRIBUICAO ${tr[1]}F`) && naFaixaKva(d, kva));
       }
-      for (const [re, rotulo, filtro] of PALAVRAS) if (re.test(t)) por(rotulo, "1", filtro);
+      for (const [re, rotulo, filtro] of PALAVRAS) {
+        const m = re.exec(t);
+        if (!m) continue;
+        // quantidade: o número logo antes ("INST. 03 ISOL DE SUSPENSÃO" = 3); sem número, 1
+        const q = /(\d{1,2})\s*$/.exec(t.slice(0, m.index));
+        por(rotulo, q ? String(Number(q[1])) : "1", filtro);
+      }
       if (lista.length === antes && !repetida && !mp && !cf && !fus && !tr) outros.push(l.texto);
     }
     return { operativo, lista, outros: [...new Set(outros)] };
@@ -1190,7 +1208,7 @@
 
   // leitura feita uma vez por lugar do ponto (enquanto o app está aberto)
   const lidosProjeto = new Map();
-  const chaveLido = (o, p) => `${o.id}|${o.projeto?.em}|${p.croqui.pag || 1}|${p.croqui.x}|${p.croqui.y}`;
+  const chaveLido = (o, p) => `${o.id}|${o.projeto?.em}|${p.croqui.pag || 1}|${p.croqui.x}|${p.croqui.y}|${p.nome}`;
   function doProjeto(o, p) {
     const k = chaveLido(o, p);
     if (!lidosProjeto.has(k)) {
@@ -1199,7 +1217,8 @@
         let r = { erro: true };
         try {
           const proj = await garantirProjeto(o);
-          const lido = proj && await Croqui.lerProjeto(proj, p.croqui);
+          // o nome do ponto (P2) ajuda a achar o "(P2)" do projeto quando o OCR não lê ele
+          const lido = proj && await Croqui.lerProjeto(proj, p.croqui, (p.nome || "").trim().toUpperCase());
           r = { lido };
         } catch (e) {
           console.warn("leitura do projeto:", e);
