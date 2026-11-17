@@ -1049,7 +1049,10 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .vao-campos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .vao-servicos { display: flex; flex-direction: column; gap: 8px; border: 1.5px solid #ddd6fe; }
 .rapidos-vao { grid-template-columns: 1fr 1fr; }
-.vao-qtd { font-style: normal; font-size: 12px; font-weight: 800; color: #6d28d9; }
+.vao-qtd { flex: none; padding: 3px 8px; border-radius: 999px; background: #ede9fe; font-style: normal; font-size: 13px; font-weight: 800; color: #5b21b6; white-space: nowrap; }
+.vao-qtd[hidden] { display: none; }
+.link-remarcar { align-self: flex-start; padding: 2px 0; font-weight: 700; }
+.vao-campos select { width: 100%; }
 .vao-servico { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; }
 .vao-servico small { color: var(--suave); font-weight: 600; }
 .cq-folha-nota textarea { width: 100%; }

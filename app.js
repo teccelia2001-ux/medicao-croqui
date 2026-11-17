@@ -764,7 +764,7 @@
   };
   const nomeDoPoste = (id) => pontoPorId(id)?.nome || "?";
   /** "35 m · 4 esp." do vão (o que já foi informado) */
-  const medidasVao = (v) => [v.vao.metros ? `${v.vao.metros} m` : "", v.vao.espacadores ? `${v.vao.espacadores} esp.` : ""].filter(Boolean).join(" · ");
+  const medidasVao = (v) => (v.vao.metros ? `${v.vao.metros} m` : "");
   /** Vão entre dois postes desta folha em que o toque caiu: o toque fica "entre" os dois (na
    *  direção da reta, nem antes de um nem depois do outro) e, dos que servem, o mais perto da
    *  reta. A marca do ponto fica no (P) verde, às vezes longe do poste: o toque na rede pode
@@ -841,6 +841,21 @@
     salvarAgora();
     avisar("Linha do vão ajustada.");
     render();
+  }
+  /** mudou o começo ou o fim do vão: novo nome, e a linha é refeita (de poste a poste) */
+  function trocarPostesDoVao(v, campo) {
+    const o = estado.obra;
+    const de = campo.id === "p-vao-de" ? campo.value : v.vao.de, para = campo.id === "p-vao-para" ? campo.value : v.vao.para;
+    if (de === para) { avisar("O vão precisa de dois postes diferentes.", "erro"); return render(); }
+    const outro = vaoEntre(o, de, para);
+    if (outro && outro !== v) { avisar(`Já existe o ${outro.nome}.`, "erro"); return render(); }
+    Object.assign(v.vao, { de, para, linha: null });
+    v.nome = `Vão ${nomeDoPoste(de)}–${nomeDoPoste(para)}`;
+    const a = pontoPorId(de)?.croqui, b = pontoPorId(para)?.croqui;
+    if (a && b) v.croqui = { pag: a.pag || 1, x: arred((a.x + b.x) / 2), y: arred((a.y + b.y) / 2) };
+    salvarAgora();
+    render();
+    acharLinhaDoVao(v);
   }
   const vaoEntre = (o, de, para) => o.pontos.find((p) => p.vao && ((p.vao.de === de && p.vao.para === para) || (p.vao.de === para && p.vao.para === de)));
   function terminarTraco(pts) {
@@ -995,7 +1010,7 @@
         <b class="valor">${M.fmtMoeda(tp.valor)}</b>
         <button type="button" class="remover" data-acao="cq-fechar" aria-label="Fechar">×</button>
       </div>
-      <small class="sub">${p.vao ? `📏 ${esc(medidasVao(p) || "metragem e espaçadores não informados")} · ` : ""}${p.dia ? esc(M.fmtDia(p.dia)) + " · " : ""}${plural(p.itens.length, "serviço", "serviços")} · ${p.fotos.length ? "📷 " + p.fotos.length : "sem foto"}${p.croqui ? "" : " · fora do croqui"}</small>
+      <small class="sub">${p.vao ? `📏 ${esc(medidasVao(p) || "metragem não informada")} · ` : ""}${p.dia ? esc(M.fmtDia(p.dia)) + " · " : ""}${plural(p.itens.length, "serviço", "serviços")} · ${p.fotos.length ? "📷 " + p.fotos.length : "sem foto"}${p.croqui ? "" : " · fora do croqui"}</small>
       ${p.obs ? `<p class="cq-obs">${esc(p.obs)}</p>` : ""}
       <div class="cq-corpo">
         ${secoes || `<p class="vazio">Nenhum serviço lançado neste ponto ainda.</p>`}
@@ -1707,9 +1722,11 @@
       <section class="cartao dados">
         ${p.geral ? `<p class="faixa faixa-geral">🧰 <b>Serviços da obra, sem ponto.</b> O que for lançado aqui soma no total da obra e sai na medição como <b>SERVIÇOS GERAIS</b>.</p>` : p.vao ? `<p class="faixa faixa-vao">📏 <b>Vão entre ${esc(nomeDoPoste(p.vao.de))} e ${esc(nomeDoPoste(p.vao.para))}</b></p>
         <div class="vao-campos">
-          <label class="campo">Metragem (m)<input id="p-metros" inputmode="decimal" value="${esc(p.vao.metros || "")}" placeholder="Ex.: 35" autocomplete="off"></label>
-          <label class="campo">Espaçadores<input id="p-esp" inputmode="numeric" value="${esc(p.vao.espacadores || "")}" placeholder="Ex.: 4" autocomplete="off"></label>
-        </div>` : `<label class="campo">Ponto
+          <label class="campo">De<select id="p-vao-de">${opcoesPostes(o, p.vao.de)}</select></label>
+          <label class="campo">Para<select id="p-vao-para">${opcoesPostes(o, p.vao.para)}</select></label>
+        </div>
+        <label class="campo">Metragem (m)<input id="p-metros" inputmode="decimal" value="${esc(p.vao.metros || "")}" placeholder="Ex.: 35" autocomplete="off"></label>
+        ${o.projeto ? `<button type="button" class="link link-remarcar" data-acao="vao-remarcar">📌 Remarcar a linha no croqui</button>` : ""}` : `<label class="campo">Ponto
           <input id="p-nome" value="${esc(p.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off">
         </label>`}
         <label class="campo"><span>Observação <small>(se tiver)</small></span>
@@ -1773,6 +1790,9 @@
     </div>`;
   }
 
+  /** os postes da obra para escolher o começo e o fim do vão */
+  const opcoesPostes = (o, sel) => postes(o).slice().sort(cmpPonto)
+    .map((q) => `<option value="${esc(q.id)}"${q.id === sel ? " selected" : ""}>${esc(q.nome)}</option>`).join("");
   /** Serviços do vão, pré-definidos pelo supervisor (17/11/2026), todos da LM:
    *  [grupo, [[código, nome curto, "esp" (quantidade de espaçadores) ou "m" (metragem)]]] */
   const VAO_RAPIDOS = [
@@ -1796,30 +1816,36 @@
       <small class="cat">${esc(titulo)}</small>
       <div class="rapidos rapidos-vao">${itens.map(([cod, rot, tipo]) => {
         const porMetro = tipo === "m";
-        const qtd = porMetro ? p.vao.metros : p.vao.espacadores;
+        const qtd = porMetro ? p.vao.metros : ""; // espaçador: a quantidade é digitada na hora
         const lancados = p.itens.filter((i) => i.codigo === cod && i.departamento === dep);
         const soma = (ops) => lancados.filter((i) => ops.includes(i.operacao)).reduce((t, i) => t + M.numero(i.quantidade), 0);
         const inst = soma(["INSTALAR", "EXECUTAR"]), ret = soma(["RETIRAR"]);
         const selos = (inst ? `<b class="rapido-qtd q-ins" title="Instalado">${M.fmtQtd(inst)}</b>` : "") + (ret ? `<b class="rapido-qtd q-ret" title="Retirado">${M.fmtQtd(ret)}</b>` : "");
         return `<button type="button" class="rapido vao-servico${lancados.length ? " rapido-usado" : ""}" data-acao="vao-servico" data-chave="${esc(`${dep}|${cod}`)}" data-rotulo="${esc(rot)}" data-vao-qtd="${tipo}" data-qtd="${esc(qtd || "")}">
           <span>${esc(rot)} <small>${esc(cod)}${porMetro ? " · por m" : ""}</small></span>
-          <span class="rapido-qtds">${selos || (qtd ? `<i class="vao-qtd" data-vao-mostra>${esc(qtd)}${porMetro ? " m" : ""}</i>` : `<i class="vao-qtd" data-vao-mostra hidden></i>`)}</span></button>`;
+          ${porMetro ? `<i class="vao-qtd" data-vao-mostra${qtd ? "" : " hidden"}>${qtd ? `${esc(qtd)} m` : ""}</i>` : ""}
+          ${selos ? `<span class="rapido-qtds">${selos}</span>` : ""}</button>`;
       }).join("")}</div>
     </div>`;
     return `<section class="cartao vao-servicos">
       <b>Serviços do vão</b>
-      <small class="sub">A metragem vai para os serviços por metro e os espaçadores para o espaçador. Toque para conferir e lançar.</small>
+      <small class="sub" id="vao-dica">${vaoDica(p)}</small>
       ${VAO_RAPIDOS.map(grupoHtml).join("")}
     </section>`;
   }
-  /** a metragem ou os espaçadores mudaram: troca só a quantidade dos botões (o teclado fica) */
+  const vaoDica = (p) => (p.vao.metros
+    ? `<b>${esc(p.vao.metros)} m</b> já sugeridos no condutor e no retencionamento. Toque para conferir e lançar.`
+    : "Digite a metragem: ela já vai para o condutor e o retencionamento. Toque para conferir e lançar.");
+  /** a metragem mudou: troca só a quantidade dos botões (o teclado fica) */
   function atualizarBotoesVao(p) {
-    document.querySelectorAll("[data-vao-qtd]").forEach((b) => {
-      const m = b.dataset.vaoQtd === "m", q = m ? p.vao.metros : p.vao.espacadores;
+    document.querySelectorAll('[data-vao-qtd="m"]').forEach((b) => {
+      const q = p.vao.metros;
       b.dataset.qtd = q || "";
       const el = b.querySelector("[data-vao-mostra]");
-      if (el) { el.textContent = q ? `${q}${m ? " m" : ""}` : ""; el.hidden = !q; }
+      if (el) { el.textContent = q ? `${q} m` : ""; el.hidden = !q; }
     });
+    const dica = document.getElementById("vao-dica");
+    if (dica) dica.innerHTML = vaoDica(p);
   }
 
   async function baixarCroqui() {
@@ -2649,6 +2675,12 @@
         estado.cqMover = null;
         if (estado.cqAjuste) { estado.cqSel = estado.cqAjuste.id; estado.cqAjuste = null; }
         return render();
+      case "vao-remarcar": { // da tela do vão: vai ao croqui já no ajuste da linha
+        const v = ponto();
+        if (!v?.vao || !o.projeto) return;
+        const a = pontoPorId(v.vao.de)?.croqui;
+        return irPara("croqui", { cqAjuste: { id: v.id, pts: [] }, cqSel: null, cqNovo: null, cqCentrar: v.id, cqPag: a?.pag || estado.cqPag });
+      }
       case "cq-ajustar-vao": // dois toques: no poste de início e no de fim
         estado.cqAjuste = { id: alvo.dataset.id, pts: [] };
         Object.assign(estado, { cqSel: null, cqNovo: null, cqNota: null, cqDesenho: false });
@@ -3016,13 +3048,13 @@
     if (t.id === "cq-nome" && estado.cqNovo) { Object.assign(estado.cqNovo, { nome: t.value.toUpperCase().slice(0, 30), editado: true }); return; }
     if (p && t.id === "p-nome") { p.nome = t.value.toUpperCase().slice(0, 30); salvarDepois(); return; }
     if (p && t.id === "p-obs") { p.obs = t.value; salvarDepois(); return; }
-    if (p?.vao && (t.id === "p-metros" || t.id === "p-esp")) {
-      const v = t.value.replace(/[^\d,.]/g, "").slice(0, 8);
-      if (t.id === "p-metros") p.vao.metros = v; else p.vao.espacadores = v.replace(/[,.].*$/, "");
+    if (p?.vao && t.id === "p-metros") {
+      p.vao.metros = t.value.replace(/[^\d,.]/g, "").slice(0, 8);
       salvarDepois();
       atualizarBotoesVao(p);
       return;
     }
+    if (p?.vao && (t.id === "p-vao-de" || t.id === "p-vao-para")) return trocarPostesDoVao(p, t);
     if (t.id === "cq-nota-texto" && estado.cqNota) { estado.cqNota.texto = t.value; return; }
   });
 
