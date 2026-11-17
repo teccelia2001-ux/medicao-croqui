@@ -650,6 +650,7 @@
       ${o.projeto ? `<button type="button" class="botao botao-grande" data-acao="croqui">🗺 Abrir o croqui <small>${soLeitura(o) ? "toque num ponto para ver o que foi feito" : "toque no poste para lançar os serviços"}</small></button>`
         : soLeitura(o) ? "" : `<div class="cartao dados sem-projeto"><b>Medir pelo croqui</b><p class="sub">Anexe o projeto da obra (PDF ou foto) para tocar no poste e lançar ali os serviços.</p>
           <button type="button" class="botao" data-acao="editar-obra">📎 Anexar o projeto</button></div>`}
+      ${o.projeto && !soLeitura(o) ? `<button type="button" class="botao botao-claro botao-pequeno" data-acao="analisar-projeto" ${estado.analise?.obraId === o.id && /pontos|servicos/.test(estado.analise.fase) ? "disabled" : ""}>🔎 Achar todos os pontos (P) do projeto</button>` : ""}
       ${soLeitura(o) ? "" : `<button type="button" class="botao ${o.projeto ? "botao-claro botao-pequeno" : "botao-grande"}" data-acao="novo-ponto">+ Novo ponto${o.projeto ? " fora do croqui" : ""} <small>${esc(proximoNome(o))}</small></button>`}
       ${cartaoGeral}
       <section class="bloco">
@@ -691,6 +692,76 @@
   const arred = (v) => Math.round(v * 100000) / 100000;
   const pontoPorId = (id) => estado.obra?.pontos.find((p) => p.id === id) || null;
 
+  // ---------- análise geral do projeto
+  // Ao anexar o projeto: acha todos os "(P)" verdes, cria os pontos já marcados no croqui e
+  // lê as sugestões de cada um. Na hora de medir é só abrir o ponto e lançar.
+  async function analisarProjeto(obra) {
+    if (!obra?.projeto || soLeitura(obra) || estado.analise?.fase === "pontos" || estado.analise?.fase === "servicos") return;
+    const a = (estado.analise = { obraId: obra.id, fase: "pontos", feitos: 0, total: 0, achados: 0 });
+    mostrarAnalise();
+    try {
+      const proj = await garantirProjeto(obra);
+      if (!proj) throw new Error("O projeto não está neste celular.");
+      const pags = await Croqui.paginas(proj);
+      const achados = [];
+      for (let pag = 1; pag <= pags; pag++) {
+        achados.push(...(await Croqui.acharPontos(proj, pag, (f, t) => { Object.assign(a, { feitos: f, total: t }); mostrarAnalise(); })));
+      }
+      a.achados = achados.length;
+      // a obra pode ter sido recarregada no meio: trabalha na que está valendo
+      const o = estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra;
+      for (const x of achados) {
+        const croqui = { pag: x.pag, x: arred(x.x), y: arred(x.y) };
+        const ja = M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === x.nome);
+        if (ja) { if (!ja.croqui) ja.croqui = croqui; continue; } // já lançado: só ganha o lugar
+        // sem data: a data de execução entra quando o 1º serviço for lançado
+        o.pontos.push({ id: novoId(), nome: x.nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true });
+      }
+      if (estado.obra === o) {
+        await salvarAgora();
+        if (estado.tela === "croqui") atualizarMarcas();
+      } else {
+        await Banco.salvarObra({ ...o, dono: true });
+        enviarDepois();
+      }
+      // as sugestões de cada ponto, uma de cada vez (ficam guardadas no aparelho)
+      const comLugar = M.pontosReais(o.pontos).filter((p) => p.croqui);
+      Object.assign(a, { fase: "servicos", feitos: 0, total: comLugar.length });
+      mostrarAnalise();
+      for (const p of comLugar) {
+        await lerSugestoes(o, p.croqui, p.nome);
+        a.feitos++;
+        mostrarAnalise();
+      }
+      a.fase = "pronto";
+    } catch (e) {
+      console.warn("análise do projeto:", e);
+      Object.assign(a, { fase: "erro", erro: e.message });
+    }
+    mostrarAnalise();
+    if (estado.tela === "croqui" && estado.obra?.id === obra.id) render(); // título com o total de pontos
+    setTimeout(() => { if (estado.analise === a) { estado.analise = null; mostrarAnalise(); } }, 8000);
+  }
+
+  function analiseHtml(o) {
+    const a = estado.analise;
+    if (!a || a.obraId !== o.id) return "";
+    const t = a.fase === "pontos" ? `🔎 Procurando os pontos (P) no projeto… ${a.total ? `${a.feitos} de ${a.total}` : ""}`
+      : a.fase === "servicos" ? `🔎 Lendo os serviços de cada ponto… ${a.feitos} de ${a.total}`
+        : a.fase === "pronto" ? `✓ ${plural(a.achados, "ponto achado", "pontos achados")} no projeto, com as sugestões prontas`
+          : `Não deu para analisar o projeto${a.erro ? `: ${esc(a.erro)}` : ""}.`;
+    return `<div class="cq-dica cq-analise" id="cq-analise"><span>${t}</span></div>`;
+  }
+  /** troca só o aviso da análise (refazer a tela tiraria o zoom de lugar) */
+  function mostrarAnalise() {
+    const el = document.getElementById("cq-analise");
+    const o = estado.obra;
+    if (estado.tela !== "croqui" || !o) return;
+    const html = analiseHtml(o);
+    if (el) el.outerHTML = html || "";
+    else if (html && !estado.cqNovo && !estado.cqSel && !estado.cqMover) document.getElementById("cq-area")?.insertAdjacentHTML("afterbegin", html);
+  }
+
   function telaCroqui() {
     const o = estado.obra;
     const t = M.totaisObra(o);
@@ -703,7 +774,7 @@
     const dica = estado.cqNovo || sel ? "" : mover ? `<div class="cq-dica cq-dica-mover"><span>📌 Toque no croqui onde fica o <b>${esc(mover.nome)}</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : !o.projeto ? ""
         : soLeitura(o) ? (marcados ? "" : `<div class="cq-dica">Nenhum ponto marcado no croqui.</div>`)
-          : !marcados ? `<div class="cq-dica">Toque no poste para lançar os serviços dele</div>` : "";
+          : analiseHtml(o) || (!marcados ? `<div class="cq-dica">Toque no poste para lançar os serviços dele</div>` : "");
     const baixo = sel ? folhaPontoCroqui(sel) : estado.cqNovo ? folhaNovoCroqui() : `<div class="cq-barra">
         <div class="rodape-total"><span>Total da obra</span><b>${M.fmtMoeda(t.valor)}</b></div>
         <button type="button" class="botao" data-acao="medicao" ${o.pontos.some((p) => p.itens.length) ? "" : "disabled"}>Gerar medição</button>
@@ -1226,11 +1297,12 @@
   }
   /** Lê no projeto os serviços do lugar `croqui` (uma vez só por lugar). Começa já no toque
    *  do croqui, junto com o nome do poste: ao abrir o ponto as sugestões estão prontas. */
+  const leiturasEmCurso = new Map();
   function lerSugestoes(o, croqui, nome) {
     const k = chaveLido(o, croqui);
-    if (lidosProjeto.has(k)) return;
+    if (lidosProjeto.has(k)) return leiturasEmCurso.get(k) || Promise.resolve();
     lidosProjeto.set(k, { lendo: true });
-    (async () => {
+    const vez = (async () => {
       let r = { erro: true };
       try {
         const guardado = (await lidosGuardados())[k];
@@ -1251,7 +1323,10 @@
       const el = document.getElementById("do-projeto");
       const atual = estado.tela === "ponto" ? ponto() : null;
       if (el && atual?.croqui && estado.obra && chaveLido(estado.obra, atual.croqui) === k) el.outerHTML = doProjetoHtml(estado.obra, atual);
+      leiturasEmCurso.delete(k);
     })();
+    leiturasEmCurso.set(k, vez);
+    return vez;
   }
   function doProjeto(o, p) {
     lerSugestoes(o, p.croqui, p.nome);
@@ -1983,6 +2058,8 @@
     Banco.pedirPersistencia();
     irPara(o.projeto && (nova || pn) ? "croqui" : "obra");
     if (mudouNumero) refazerFaixas(o, o.pontos);
+    // projeto novo: análise geral (acha os pontos e lê as sugestões de todos)
+    if (pn) setTimeout(() => analisarProjeto(o), 300);
   }
 
   /** `nome` e `croqui` ({ pag, x, y }) quando o ponto nasce de um toque no croqui */
@@ -2018,6 +2095,7 @@
   function adicionarItens(sids) {
     const p = ponto();
     if (M.numero(estado.qtd) <= 0) return;
+    if (!p.dia) p.dia = hoje(); // ponto achado no projeto: a data é a do 1º serviço lançado
     const ano = Number((p.dia || hoje()).slice(0, 4));
     let algum = false;
     for (const sid of sids) {
@@ -2043,7 +2121,9 @@
     estado.arquivo = null;
     render();
     try {
-      const o = estado.obra;
+      // a medição é do que foi feito: os pontos achados no projeto e ainda sem nada lançado
+      // (serviço, foto ou observação) ficam de fora da planilha, do PDF e do croqui do PDF
+      const o = { ...estado.obra, pontos: estado.obra.pontos.filter((p) => p.itens.length || p.fotos.length || (p.obs || "").trim()) };
       if (tipo === "pdf") {
         // fotos que estão só no banco: baixa antes de montar o PDF
         let faltando = 0;
@@ -2330,6 +2410,10 @@
         estado.qtd = alvo.dataset.qtd || "";
         return render();
       }
+      case "analisar-projeto": // análise geral de novo (obra com projeto anexado antes)
+        irPara("croqui");
+        setTimeout(() => analisarProjeto(estado.obra), 300);
+        return;
       case "sug-ocultar": // sugestão do projeto que o supervisor não vai usar
       case "sug-mostrar": {
         const p = ponto();

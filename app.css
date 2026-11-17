@@ -1003,3 +1003,4 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .opcao-ambos { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; width: 52px; height: 52px; padding: 0; border: 2px solid #94a3b8; border-radius: 50%; background: #fff; color: #334155; font-family: inherit; font-size: 19px; font-weight: 800; line-height: 1; cursor: pointer; }
 .opcao-ambos small { font-size: 9.5px; font-weight: 700; letter-spacing: 0.2px; }
 .opcao-ambos:disabled { opacity: 0.45; cursor: default; }
+.cq-analise { background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a; }

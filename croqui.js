@@ -761,12 +761,19 @@
    *  folha): { nome: "P1", texto: "F.P1" } ou null. */
   function lerPoste(proj, pos) {
     return naFila(async () => {
-      // 2ª tentativa em outro tamanho: o OCR às vezes perde um número num deles
-      for (const px of [840, 1050]) {
+      // lê em tamanhos diferentes e fica com o nome que mais se repete: o OCR às vezes troca
+      // um número num deles ("(P5)" lido "(P3)")
+      const votos = new Map();
+      for (const px of window.CROQUI_TAMANHOS || [700, 900, 1150]) {
         const achou = await lerPosteEm(proj, pos, px);
-        if (achou) return achou;
+        if (!achou) continue;
+        const v = votos.get(achou.nome) || { ...achou, n: 0 };
+        v.n++;
+        votos.set(achou.nome, v);
+        if (v.n >= 2) break; // dois iguais: decidido
       }
-      return null;
+      const melhor = [...votos.values()].sort((a, b) => b.n - a.n)[0];
+      return melhor ? { nome: melhor.nome, texto: melhor.texto } : null;
     });
   }
 
@@ -789,11 +796,27 @@
   }
   async function lerPosteGirado(w, colorido) {
     const im = { w: colorido.width, h: colorido.height };
+    // só o verde vai para o OCR: o "(P4)" fica sozinho (colado na caixa vermelha, saía
+    // "(P4)DT11/600" numa palavra só) e as linhas pretas e vermelhas não confundem
     const pb = document.createElement("canvas");
     pb.width = colorido.width;
     pb.height = colorido.height;
-    pb.getContext("2d").drawImage(colorido, 0, 0);
-    const { data } = await w.recognize(pretoBranco(pb), {}, { blocks: true });
+    const pctx = pb.getContext("2d");
+    pctx.drawImage(colorido, 0, 0);
+    const dados = pctx.getImageData(0, 0, pb.width, pb.height), px = dados.data;
+    for (let i = 0; i < px.length; i += 4) {
+      const verde = Math.min(px[i], px[i + 1], px[i + 2]) < 200 && px[i + 1] > px[i] + 50 && px[i + 1] > px[i + 2] + 30;
+      px[i] = px[i + 1] = px[i + 2] = verde ? 0 : 255;
+    }
+    pctx.putImageData(dados, 0, 0);
+    // só os caracteres de um "(P12)": o OCR não troca 5 por S ou 6 por 8 tão fácil
+    await w.setParameters({ tessedit_char_whitelist: "()P0123456789" });
+    let data;
+    try {
+      ({ data } = await w.recognize(pb, {}, { blocks: true }));
+    } finally {
+      await w.setParameters({ tessedit_char_whitelist: "" });
+    }
     let melhor = null;
     for (const b of data.blocks || []) {
       for (const par of b.paragraphs) {
@@ -802,7 +825,7 @@
             // o ponto é identificado só pelo "(P2)" VERDE do projeto (supervisor, 17/11/2026):
             // o F.P2 azul não vale, nem o "(P1)" vermelho/cinza das notas
             const m = APELIDO.exec(pal.text.trim().toUpperCase().replace(/[,;:|]+$/, ""));
-            if (!m || !/[()]/.test(pal.text) || corEm(colorido, pal.bbox) !== "verde") continue;
+            if (!m || !/[()]/.test(pal.text)) continue;
             const num = m[1].replace(/[LI]/g, "1").replace(/O/g, "0");
             if (!/^\d+$/.test(num)) continue;
             const { x0, x1, y0, y1 } = pal.bbox;
@@ -1284,10 +1307,90 @@
     };
   }
 
+  /** Todos os pontos do projeto numa folha: os "(P2)" verdes. Acha os textos verdes pela cor
+   *  (rápido, sem OCR), lê cada um com `lerPoste` (endireita em qualquer posição) e fica com
+   *  os que são (P). `aoAndar(feitos, total)` conta o progresso.
+   *  Devolve [{ nome: "P2", pag, x, y }] (x, y em fração da folha). */
+  async function acharPontos(proj, pag = 1, aoAndar = () => {}) {
+    const im = await imagem(proj, { pag, px: 3000, canvas: true });
+    const W = im.cv.width, H = im.cv.height;
+    const d = im.cv.getContext("2d").getImageData(0, 0, W, H).data;
+    // grade de células de 4 px com tinta verde; células vizinhas formam um texto
+    const C = 4, gw = Math.ceil(W / C), gh = Math.ceil(H / C);
+    const cel = new Uint8Array(gw * gh);
+    for (let y = 0, i = 0; y < H; y++) {
+      for (let x = 0; x < W; x++, i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        if (Math.min(r, g, b) < 170 && g > r + 60 && g > b + 30) cel[((y / C) | 0) * gw + ((x / C) | 0)] = 1;
+      }
+    }
+    // junta as letras de um mesmo texto: fecha os vãos de até 2 células
+    const viz = new Uint8Array(gw * gh);
+    for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+      if (!cel[y * gw + x]) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const yy = y + dy, xx = x + dx;
+        if (yy >= 0 && yy < gh && xx >= 0 && xx < gw) viz[yy * gw + xx] = 1;
+      }
+    }
+    const visto = new Uint8Array(gw * gh), grupos = [];
+    for (let s = 0; s < viz.length; s++) {
+      if (!viz[s] || visto[s]) continue;
+      let x0 = gw, y0 = gh, x1 = 0, y1 = 0, n = 0;
+      const pilha = [s];
+      visto[s] = 1;
+      while (pilha.length) {
+        const k = pilha.pop(), x = k % gw, y = (k / gw) | 0;
+        if (cel[k]) { n++; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+        for (const v of [k - 1, k + 1, k - gw, k + gw]) {
+          if (v < 0 || v >= viz.length || visto[v] || !viz[v]) continue;
+          if ((v === k - 1 && x === 0) || (v === k + 1 && x === gw - 1)) continue;
+          visto[v] = 1;
+          pilha.push(v);
+        }
+      }
+      if (!n) continue;
+      // tamanho e forma de um "(P12)": baixo e comprido (em pé, se o projeto estiver girado)
+      const a = (x1 - x0 + 1) * C, b = (y1 - y0 + 1) * C, curto = Math.min(a, b), longo = Math.max(a, b);
+      const ref = Math.max(W, H);
+      if (window.CROQUI_DEPURAR) (window.CROQUI_GRUPOS = window.CROQUI_GRUPOS || []).push({ x: ((x0 + x1 + 1) / 2) * C / W, y: ((y0 + y1 + 1) / 2) * C / H, a, b, n });
+      // (encostado num símbolo verde fica quase quadrado: a leitura de perto decide)
+      if (curto < ref * 0.002 || curto > ref * 0.02 || longo / curto < 1.1 || longo / curto > 8 || longo > ref * 0.05) continue;
+      grupos.push({ x: ((x0 + x1 + 1) / 2) * C / W, y: ((y0 + y1 + 1) / 2) * C / H });
+    }
+    const achados = [];
+    for (const [i, g] of grupos.entries()) {
+      aoAndar(i, grupos.length);
+      const r = await lerPoste(proj, { pag, x: g.x, y: g.y });
+      if (r?.nome) achados.push({ nome: r.nome, pag, x: g.x, y: g.y });
+    }
+    aoAndar(grupos.length, grupos.length);
+    // o mesmo nome duas vezes (o (P6) do "DETALHE A" e o da rua): fica o que está junto dos
+    // outros pontos (o detalhe é um quadro à parte, longe da rede)
+    const pertoDosOutros = (p) => Math.min(...achados.filter((q) => q !== p && q.nome !== p.nome).map((q) => Math.hypot(q.x - p.x, q.y - p.y)), 9);
+    const unicos = new Map();
+    for (const p of achados) {
+      const ja = unicos.get(p.nome);
+      if (!ja || pertoDosOutros(p) < pertoDosOutros(ja)) unicos.set(p.nome, p);
+    }
+    // número fora da sequência ("P35" com 8 pontos na folha): o OCR pôs um dígito a mais na
+    // frente; se tirando ele sobra um número que falta (5), é esse
+    const lista = [...unicos.values()];
+    const usados = new Set(lista.map((p) => Number(p.nome.slice(1))));
+    const limite = Math.max(grupos.length, lista.length) * 2 + 5;
+    for (const p of lista) {
+      const n = Number(p.nome.slice(1));
+      if (n <= limite) continue;
+      const sem = Number(String(n).slice(1));
+      if (sem && !usados.has(sem)) { usados.delete(n); usados.add(sem); p.nome = `P${sem}`; }
+    }
+    return lista;
+  }
+
   /** deixa tudo pronto para a 1ª leitura: os dois leitores e a inclinação da folha */
   function prepararProjeto(proj, pag = 1) {
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  window.Croqui = { Visor, imagem, paginas, paraPdf, prepararLeitura, prepararProjeto, acharPontos, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();
