@@ -10,9 +10,13 @@
    exata (detalhe), um instante depois de o dedo parar. */
 (function () {
   const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
-  const BASE_LADO = 4096; // limite de lado e de área da imagem base (o celular aguenta)
-  const BASE_AREA = 7e6;
-  const DETALHE_AREA = 7e6;
+  // celular: memória curta. Com o projeto grande (11 folhas, 11 MB), os dois leitores de OCR
+  // e as imagens de 7 milhões de pixels juntos faziam o Chrome fechar o app ao abrir a obra
+  const CELULAR = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.deviceMemory || 8) <= 4;
+  const BASE_LADO = 4096; // limite de lado e de área da imagem base
+  const BASE_AREA = CELULAR ? 4e6 : 7e6;
+  const DETALHE_AREA = CELULAR ? 3e6 : 7e6;
+  const IMAGEM_AREA = 7e6; // recortes e análise: o tamanho que a leitura precisa
   const ZOOM_MAX = 18; // vezes a folha inteira na tela
 
   const esc = (t) =>
@@ -620,7 +624,7 @@
       dx = recorte.x * f.W * escala - w / 2;
       dy = recorte.y * f.H * escala - h / 2;
     } else {
-      escala = Math.min(px / Math.max(f.W, f.H), Math.sqrt(BASE_AREA / (f.W * f.H)));
+      escala = Math.min(px / Math.max(f.W, f.H), Math.sqrt(IMAGEM_AREA / (f.W * f.H)));
       w = Math.round(f.W * escala);
       h = Math.round(f.H * escala);
     }
@@ -718,6 +722,7 @@
   const leitores = new Map();
   let carregandoTesseract = null;
   function prepararLeitura(n = 1) {
+    if (CELULAR) n = 1; // um leitor só no celular (cada um ocupa dezenas de MB)
     if (!leitores.has(n)) {
       leitores.set(n, (async () => {
         if (!window.Tesseract) {
@@ -1210,7 +1215,10 @@
     // as duas passadas ao mesmo tempo, cada uma num leitor
     t0 = performance.now();
     const w2 = await prepararLeitura(2).catch(() => w);
-    const [linhasTudo, linhasVerm] = await Promise.all([linhasDe(w, tudo.cv), linhasDe(w2, verm.cv)]);
+    // celular: um leitor só, uma passada depois da outra
+    const [linhasTudo, linhasVerm] = w2 === w
+      ? [await linhasDe(w, tudo.cv), await linhasDe(w, verm.cv)]
+      : await Promise.all([linhasDe(w, tudo.cv), linhasDe(w2, verm.cv)]);
     marcarTempo("  OCR (as duas)", t0);
     for (const l of linhasVerm) {
       const k = l.palavras.findIndex((p) => /CF/.test(p.texto));
@@ -1333,16 +1341,22 @@
   async function acharPontos(proj, pag = 1, aoAndar = () => {}) {
     const im = await imagem(proj, { pag, px: 3000, canvas: true });
     const W = im.cv.width, H = im.cv.height;
-    const d = im.cv.getContext("2d").getImageData(0, 0, W, H).data;
-    // grade de células de 4 px com tinta verde; células vizinhas formam um texto
+    // grade de células de 4 px com tinta verde; células vizinhas formam um texto.
+    // Lê a folha em faixas e solta a imagem logo: inteira ocupava ~90 MB (pesa no celular)
     const C = 4, gw = Math.ceil(W / C), gh = Math.ceil(H / C);
     const cel = new Uint8Array(gw * gh);
-    for (let y = 0, i = 0; y < H; y++) {
-      for (let x = 0; x < W; x++, i += 4) {
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        if (Math.min(r, g, b) < 170 && g > r + 60 && g > b + 30) cel[((y / C) | 0) * gw + ((x / C) | 0)] = 1;
+    const ctxF = im.cv.getContext("2d");
+    for (let y0 = 0; y0 < H; y0 += 256) {
+      const fh = Math.min(256, H - y0);
+      const d = ctxF.getImageData(0, y0, W, fh).data;
+      for (let y = 0, i = 0; y < fh; y++) {
+        for (let x = 0; x < W; x++, i += 4) {
+          const r = d[i], g = d[i + 1], b = d[i + 2];
+          if (Math.min(r, g, b) < 170 && g > r + 60 && g > b + 30) cel[(((y0 + y) / C) | 0) * gw + ((x / C) | 0)] = 1;
+        }
       }
     }
+    im.cv.width = im.cv.height = 0;
     // junta as letras de um mesmo texto: fecha os vãos de até 2 células
     const viz = new Uint8Array(gw * gh);
     for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
@@ -1507,6 +1521,8 @@
 
   /** deixa tudo pronto para a 1ª leitura: os dois leitores e a inclinação da folha */
   function prepararProjeto(proj, pag = 1) {
+    // no celular nada pesado ao abrir: o leitor carrega no 1º toque no poste
+    if (CELULAR) return Promise.resolve();
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
