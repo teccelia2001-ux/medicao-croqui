@@ -1161,20 +1161,34 @@
   // tempo de cada etapa da leitura (só no teste: window.CROQUI_DEPURAR)
   const marcarTempo = (etapa, t0) => { if (window.CROQUI_DEPURAR) (window.CROQUI_TEMPOS = window.CROQUI_TEMPOS || []).push(`${etapa} ${Math.round(performance.now() - t0)}ms`); };
 
-  async function lerProjetoAgora(proj, pos, nome) {
-    let t0 = performance.now();
-    const w = await prepararLeitura();
-    marcarTempo("leitor", t0);
+  /** Ângulo em que o "(P69)" verde do ponto fica de pé (o P lido como P, não como "d"), ou
+   *  null. É a bússola da leitura dos serviços: o texto em volta está no mesmo sentido. */
+  async function orientacaoDoRotulo(w, proj, pos) {
+    const im = await imagem(proj, { pag: pos.pag || 1, px: 900, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.12, proporcao: 2 } });
+    for (const ang of await angulosDe(proj, pos.pag || 1, im.cv)) {
+      const achou = await lerPosteGirado(w, ang ? girar(im.cv, ang) : im.cv);
+      if (achou?.comP && achou.perto < 0.25) return ang;
+    }
+    return null;
+  }
+  const difAngulo = (a, b) => { const d = Math.abs((((a - b) % 360) + 540) % 360 - 180); return d; };
+
+  /** lê os serviços num recorte quadrado (`largura` em fração da folha) em volta do ponto */
+  async function lerRecorte(w, proj, pos, nome, largura, deRotulo) {
     // recorte quadrado: com o projeto em pé (90°) o texto corre na vertical e precisa da
     // mesma folga para cima e para baixo que teria para os lados
-    t0 = performance.now();
-    const im = await imagem(proj, { pag: pos.pag || 1, px: 1700, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.3, proporcao: 1 } });
-    marcarTempo("recorte", t0);
+    let t0 = performance.now();
+    const im = await imagem(proj, { pag: pos.pag || 1, px: 1700, canvas: true, recorte: { x: pos.x, y: pos.y, largura, proporcao: 1 } });
+    marcarTempo(`recorte ${largura}`, t0);
     // texto torto: lê também com o recorte endireitado (girado em volta do meio, que é o
     // ponto tocado). Pode ter caixa reta e torta juntas: fica a leitura que achou mais
     // texto deste poste.
     t0 = performance.now();
-    const angulos = window.CROQUI_ANGULOS || (await angulosDe(proj, pos.pag || 1, im.cv)); // (CROQUI_ANGULOS: só para teste)
+    let angulos = window.CROQUI_ANGULOS || (await angulosDe(proj, pos.pag || 1, im.cv)); // (CROQUI_ANGULOS: só para teste)
+    if (deRotulo != null) {
+      const doMesmoLado = angulos.filter((a) => difAngulo(a, deRotulo) < 45 && Math.abs(a - deRotulo) > 0.75);
+      angulos = [deRotulo, ...doMesmoLado];
+    }
     marcarTempo("inclinação", t0);
     if (window.CROQUI_DEPURAR) window.CROQUI_ANG = angulos;
     let melhor = null;
@@ -1182,14 +1196,12 @@
       t0 = performance.now();
       const r = await analisar(w, a ? girar(im.cv, a) : im.cv, nome);
       marcarTempo(`leitura a ${a}°`, t0);
-      // vale a leitura com o (P) mais perto do ponto tocado e o texto mais bem lido: de cabeça
-      // para baixo o OCR acha "letras", mas com pouca confiança
       // vale pelo que dá para reconhecer do projeto (DT11/1000, 1-CE3, 3-100A, ATERRAMENTO,
       // INST...): de cabeça para baixo ou picado ("ATERRAME" + "NTO") quase não pontua. A
       // confiança do OCR sozinha engana (dá 92 para um pedaço e 37 para a palavra certa).
       const nota = r ? r.linhas.reduce((s, l) => s + pontosDoTexto(l.texto), 0) - (r.distancia / (im.w * 0.05)) * 3 : -Infinity;
       const conf = r?.linhas.length ? r.linhas.reduce((s, l) => s + l.conf, 0) / r.linhas.length : 0;
-      if (window.CROQUI_DEPURAR) (window.CROQUI_NOTAS = window.CROQUI_NOTAS || []).push({ a, nota: Math.round(nota), conf: Math.round(conf), dist: r && Math.round(r.distancia), linhas: r && r.linhas.map((l) => `${l.texto} (${Math.round(l.conf)})`) });
+      if (window.CROQUI_DEPURAR) (window.CROQUI_NOTAS = window.CROQUI_NOTAS || []).push({ largura, a, nota: Math.round(nota), conf: Math.round(conf), dist: r && Math.round(r.distancia), linhas: r && r.linhas.map((l) => `${l.texto} (${Math.round(l.conf)})`) });
       if (!melhor || nota > melhor.nota) melhor = { r, nota };
       // leitura que reconhece bastante do projeto, no ponto: basta (não lê nos outros ângulos)
       if (r?.linhas.length && r.distancia < im.w * 0.1 && nota >= 25) break;
@@ -1197,6 +1209,25 @@
       if (Math.abs(a) > 90 && melhor.nota >= 12) break;
       const proximo = angulos[angulos.indexOf(a) + 1];
       if (proximo !== undefined && Math.abs(proximo) > 90 && melhor.nota >= 12) break;
+    }
+    return melhor;
+  }
+
+  async function lerProjetoAgora(proj, pos, nome) {
+    let t0 = performance.now();
+    const w = await prepararLeitura();
+    marcarTempo("leitor", t0);
+    // o rótulo (P) diz qual lado é para cima: lê nesse sentido e não tenta o de cabeça para
+    // baixo (o (P69) em pé saía "VAIAYHNIT" = LINHA VIVA invertido)
+    t0 = performance.now();
+    const deRotulo = window.CROQUI_ANGULOS ? null : await orientacaoDoRotulo(w, proj, pos).catch(() => null);
+    marcarTempo("rótulo", t0);
+    // recorte de 30% da folha; texto miúdo (projeto grande numa folha só) sai embaralhado
+    // nele ("3772/1500" no lugar de "DT12/1500"): se reconheceu pouco, lê de novo com zoom
+    let melhor = await lerRecorte(w, proj, pos, nome, window.CROQUI_LARGURA || 0.3, deRotulo);
+    if (!window.CROQUI_LARGURA && melhor.nota < 25) {
+      const perto = await lerRecorte(w, proj, pos, nome, 0.15, deRotulo);
+      if (perto.nota > melhor.nota) melhor = perto;
     }
     if (melhor.r) {
       delete melhor.r.distancia;
