@@ -1144,3 +1144,58 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .teclado-app button:active { background: #e2e8f0; }
 .teclado-app .teclado-ok { grid-column: 1 / -1; background: var(--vermelho); color: #fff; font-size: 18px; }
 .cq-regua.ativo { background: #7c3aed !important; color: #fff; }
+
+/* ---------------------------------------------------------------- todos os aparelhos
+   Nada pode ficar cortado: celular pequeno (320 px), celular deitado (pouca altura),
+   tablet e computador. O que não cabe rola, em vez de sumir. */
+/* janelas por cima (quantidade, busca, avisos): rolam quando a tela é baixa */
+.fundo { overflow-y: auto; overscroll-behavior: contain; }
+.folha { flex: none; }
+/* resumo do ponto no croqui: rola inteiro quando não cabe (antes só os serviços rolavam e
+   os botões de baixo, como "Excluir ponto", ficavam fora da tela) */
+.cq-folha { overflow-y: auto; overscroll-behavior: contain; }
+/* botões do zoom: com pouca altura viram duas colunas (para a esquerda) em vez de cortar */
+/* (centrados na parte livre, acima da barra do total ou do resumo do ponto) */
+.cq-controles {
+  top: calc((100% - var(--baixo, 0px)) / 2);
+  max-height: calc(100% - var(--baixo, 0px) - 16px);
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
+}
+@media (max-height: 520px) {
+  .cq-controles { gap: 6px; }
+  .cq-controles button, .cq-folhas button { width: 38px; height: 38px; font-size: 19px; }
+  /* celular deitado: a folha do ponto usa a altura toda, sem cobrir o topo (Obras / Pontos) */
+  .cq-folha { max-height: calc(100% - 56px); }
+  /* com a folha do ponto embaixo quase não sobra projeto: os botões do zoom saem até fechar */
+  .pagina-croqui:has(> .cq-folha) .cq-controles { display: none; }
+  .cq-folha .botao { min-height: 42px; }
+  .cq-corpo { flex: none; overflow: visible; }
+  .cq-barra { padding-top: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+  .cq-barra .botao { min-height: 40px; }
+  /* rodapé fixo das telas: mais baixo, para sobrar espaço para o conteúdo */
+  .rodape { padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .rodape-total { margin-bottom: 4px !important; }
+  .rodape .botao, .rodape .botao-grande { min-height: 42px; padding-top: 6px; padding-bottom: 6px; }
+  .fundo { align-items: flex-start; padding: 8px; }
+  .folha { padding: 12px; gap: 8px; }
+}
+@media (min-width: 760px) and (min-aspect-ratio: 4/3) and (max-height: 520px) {
+  .cq-folha { top: 52px; max-height: calc(100% - 60px); }
+  .pagina-croqui:has(> .cq-folha) .cq-controles { display: flex; } /* a folha fica à direita */
+}
+/* celular estreito: a barra do total do croqui cabe inteira (o texto dos botões quebra) */
+@media (max-width: 380px) {
+  .cq-barra { gap: 6px; padding-left: 10px; padding-right: 10px; grid-template-columns: minmax(0, 1fr) auto auto; }
+  .cq-barra .botao { padding: 0 10px; font-size: 14px; white-space: normal; line-height: 1.1; max-width: 118px; }
+  .cq-barra .rodape-total b { font-size: 16px; }
+  .cq-topo { gap: 4px; padding-left: 6px; padding-right: 6px; }
+  .cq-titulo b { font-size: 15px; }
+}
+/* textos longos (nomes de serviço, endereços) quebram em vez de empurrar a tela de lado */
+.pagina, .folha, .cq-folha, .cq-painel { overflow-wrap: break-word; }
+/* ícones dos botões do zoom desenhados (os símbolos ⤢ e ⟳ saíam tortos ou apagados em alguns Androids) */
+.cq-controles button { display: grid; place-items: center; padding: 0; }
+.cq-icone { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+/* por cima do projeto branco os botões sumiam: borda e sombra mais fortes */
+.cq-controles button { border: 1px solid #cbd5e1; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.3); }
