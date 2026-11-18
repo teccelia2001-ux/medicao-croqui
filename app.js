@@ -1511,7 +1511,8 @@
         <button type="button" class="botao botao-claro" data-acao="cq-nota-fechar">Cancelar</button>
         <button type="button" class="botao" data-acao="cq-nota-salvar">Salvar anotação</button>
       </div>
-      ${n.id ? `<button type="button" class="link cq-excluir" data-acao="cq-nota-excluir">🗑 Excluir anotação</button>` : ""}`}
+      ${n.id ? `<button type="button" class="botao botao-claro" data-acao="cq-nota-ponto">📍 Criar ponto aqui</button>
+      <button type="button" class="link cq-excluir" data-acao="cq-nota-excluir">🗑 Excluir anotação</button>` : ""}`}
     </div>`;
   }
 
@@ -1679,6 +1680,10 @@
 
   function tocouMarca(id) {
     if (estado.tela !== "croqui") return;
+    // anotação (ex.: poste novo desenhado no rascunho): ao mudar o lugar de um ponto ou marcar um
+    // vão, tocar nela vale como tocar no lugar dela
+    const nota = String(id).startsWith("nota:") ? (estado.obra.anotacoes?.notas || []).find((x) => `nota:${x.id}` === id) : null;
+    if (nota && (estado.cqMover || estado.cqVaoNovo)) return tocouVazio({ x: nota.x, y: nota.y });
     if (estado.cqMover) return avisar("Toque num lugar vazio do croqui.", "guardado");
     if (estado.cqAjuste) return avisar("Toque no quadradinho preto do poste, fora dos nomes.", "guardado");
     if (estado.cqVaoNovo) { // tocou na marca de um ponto: é esse poste
@@ -3163,6 +3168,15 @@
         if (!v?.vao || !o.projeto) return;
         const a = pontoPorId(v.vao.de)?.croqui;
         return irPara("croqui", { cqAjuste: { id: v.id, pts: [] }, cqSel: null, cqNovo: null, cqCentrar: v.id, cqPag: a?.pag || estado.cqPag });
+      }
+      case "cq-nota-ponto": { // ponto novo em cima da anotação (a anotação continua lá)
+        const n = estado.cqNota;
+        if (!n) return;
+        const ja = (anotacoes(o).notas || []).find((x) => x.id === n.id);
+        if (ja && (n.texto || "").trim() && ja.texto !== n.texto.trim()) { ja.texto = n.texto.trim(); salvarAgora(); } // o que mudou no texto fica
+        estado.cqNota = null;
+        estado.cqSel = null;
+        return tocouVazio({ x: n.x, y: n.y });
       }
       case "cq-vao-novo": // marcar um vão: toque no poste inicial e no final
         if (estado.cqVaoNovo) { estado.cqVaoNovo = null; return render(); }
