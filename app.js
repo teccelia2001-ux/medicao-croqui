@@ -913,20 +913,22 @@
     }
   }
   /** o poste (ponto) desta folha mais perto de `q`, até 5% da largura da folha */
-  function postePerto(o, q) {
+  function postePerto(o, q, evitar = null) {
     const k = visor?.W ? (visor.giro % 180 ? visor.W / visor.H : visor.H / visor.W) : 1.3;
+    // até 5% da folha, mas com zoom grande só uns 70 px da tela (senão um ponto vizinho "pega")
+    const raio = visor?.W && visor.s ? Math.min(0.05, Math.max(0.012, 70 / (visor.s * visor.W))) : 0.05;
     let melhor = null;
     for (const p of postes(o)) {
-      if (!p.croqui || (p.croqui.pag || 1) !== q.pag) continue;
+      if (!p.croqui || (p.croqui.pag || 1) !== q.pag || p.id === evitar) continue;
       const d = Math.hypot(p.croqui.x - q.x, (p.croqui.y - q.y) * k);
-      if (d < 0.05 && (!melhor || d < melhor.d)) melhor = { p, d };
+      if (d < raio && (!melhor || d < melhor.d)) melhor = { p, d };
     }
     return melhor?.p || null;
   }
   /** O vão usa só os pontos dos postes que já existem (não cria ponto novo). O ponto do poste
    *  tocado é: o que está perto do quadradinho; senão o que tem o nome do (P) lido mais perto
    *  (o ponto pode ter ficado no rótulo, longe do poste); senão o mais perto até 10% da folha. */
-  async function posteExistente(o, pos) {
+  async function posteExistente(o, pos, evitar = null) {
     const em = o.projeto?.em || "";
     const local = (await todosRotulos())[o.id];
     const lista = (local && local.em === em ? local.pags[pos.pag] : null) || (o.rotulos?.em === em ? o.rotulos.pags?.[pos.pag] : null) || [];
@@ -936,11 +938,11 @@
       const d = Math.hypot(x.x - pos.x, (x.y - pos.y) * k);
       if (d < 0.2 && (!rot || d < rot.d)) rot = { ...x, d };
     }
-    const doRotulo = rot && postes(o).find((p) => p.nome.trim().toUpperCase() === rot.nome);
+    const doRotulo = rot && postes(o).find((p) => p.nome.trim().toUpperCase() === rot.nome && p.id !== evitar);
     if (doRotulo) return doRotulo;
     let melhor = null;
     for (const p of postes(o)) {
-      if (!p.croqui || (p.croqui.pag || 1) !== pos.pag) continue;
+      if (!p.croqui || (p.croqui.pag || 1) !== pos.pag || p.id === evitar) continue;
       const d = Math.hypot(p.croqui.x - pos.x, (p.croqui.y - pos.y) * k);
       if (d < 0.1 && (!melhor || d < melhor.d)) melhor = { p, d };
     }
@@ -950,7 +952,8 @@
    *  nasce (ou é refeito) com a linha exata entre elas e abre para a metragem. */
   async function marcarPontaDoVao(pos, posteId = null) {
     const vn = estado.cqVaoNovo, o = estado.obra;
-    if (!vn || vn.ocupado || !o) return;
+    if (!vn || !o) return;
+    if (vn.ocupado) { vn.proximo = [pos, posteId]; return; } // tocou de novo antes de acabar: vem logo depois
     vn.ocupado = true;
     let q = pos;
     try {
@@ -959,7 +962,9 @@
     } catch (e) {
       console.warn("poste perto do toque:", e);
     }
-    const poste = (posteId && pontoPorId(posteId)) || postePerto(o, { ...q, pag: pos.pag }) || postePerto(o, pos) || (await posteExistente(o, pos));
+    // o poste inicial não conta para o fim (o P5.1 perto "pegava" o toque no poste do P7)
+    const ini = vn.pts[0]?.id || null;
+    const poste = (posteId && pontoPorId(posteId)) || postePerto(o, { ...q, pag: pos.pag }, ini) || postePerto(o, pos, ini) || (await posteExistente(o, pos, ini));
     vn.ocupado = false;
     if (estado.cqVaoNovo !== vn) return;
     // sem ponto aqui: a ponta fica livre (fora do poste), sem criar ponto
@@ -969,7 +974,12 @@
     }
     vn.pts.push({ pag: pos.pag, x: arred(q.x), y: arred(q.y), id: poste?.id || null });
     if (!poste) avisar("Ponta fora do poste marcada (sem criar ponto).", "guardado");
-    if (vn.pts.length < 2) { salvarAgora(); return render(); }
+    if (vn.pts.length < 2) {
+      salvarAgora();
+      render();
+      if (vn.proximo) { const [p2, id2] = vn.proximo; vn.proximo = null; return marcarPontaDoVao(p2, id2); }
+      return;
+    }
     const [a, b] = vn.pts;
     estado.cqVaoNovo = null;
     let v = vaoEntre(o, a.id, b.id);
