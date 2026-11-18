@@ -69,12 +69,15 @@
   const soLeitura = (o) => o && o.dono === false;
 
   let tempoSalvar = null;
+  let vaiSalvar = false; // tem alteração esperando os 400 ms para ser guardada
   function salvarDepois() {
     clearTimeout(tempoSalvar);
+    vaiSalvar = true;
     tempoSalvar = setTimeout(salvarAgora, 400);
   }
   async function salvarAgora() {
     clearTimeout(tempoSalvar);
+    vaiSalvar = false;
     // obra nova só existe depois do botão "Criar obra"
     if (!estado.obra || soLeitura(estado.obra) || !estado.obra.criada_em) return;
     if ((await obrasExcluidas()).has(estado.obra.id)) return;
@@ -266,11 +269,24 @@
           if (!o.pendente && antiga && !noBanco.has(o.id) && estado.obra?.id !== o.id) await Banco.excluirObra(o.id);
         }
       }
-      // obra parada no aparelho e mais nova no banco: traz a versão do banco
+      // obra parada no aparelho e mais nova no banco: traz a versão do banco (alterada em outro
+      // aparelho). A obra aberta só troca se ninguém está mexendo nela agora
+      let trocouAberta = null;
       for (const r of lista) {
         const local = await Banco.obterObra(r.id);
         if (local && !local.pendente && r.atualizada_em && new Date(r.atualizada_em) > new Date(local.atualizada_em)) {
+          const aberta = estado.obra?.id === r.id;
+          if (aberta && !podeTrocarAberta()) continue; // fica para a próxima busca
           await trazerObra(r.id);
+          if (aberta) trocouAberta = r.id;
+        }
+      }
+      if (trocouAberta && estado.obra?.id === trocouAberta && podeTrocarAberta()) {
+        const nova = await Banco.obterObra(trocouAberta);
+        if (nova) {
+          estado.obra = nova;
+          render();
+          avisar("Obra atualizada com o que foi feito em outro aparelho.", "guardado");
         }
       }
       if (estado.tela === "inicio") { await recarregarLocais(); render(); }
@@ -278,6 +294,15 @@
     } catch (e) {
       if (avisando) avisar(e.message, "erro");
     }
+  }
+
+  /** a obra aberta pode ser trocada pela do banco: nada esperando para salvar ou enviar, e o
+   *  supervisor não está digitando nem no meio de um toque, ajuste ou rascunho */
+  function podeTrocarAberta() {
+    const o = estado.obra;
+    if (!o || vaiSalvar || o.pendente) return false;
+    if (document.activeElement?.matches?.("input, textarea, select")) return false;
+    return !(estado.escolhido || estado.cqNovo || estado.cqNota || estado.cqAjuste || estado.cqDesenho || estado.cqMover || estado.gerando);
   }
 
   async function trazerObra(id) {
@@ -3408,6 +3433,13 @@
     if (estado.tela === "inicio") render();
   });
   setInterval(() => enviarDepois(0), 20000);
+  // o que mudou em outro aparelho chega em qualquer tela (antes só ao voltar para o início)
+  setInterval(() => {
+    if (document.visibilityState === "visible" && navigator.onLine && !estado.enviando) buscarRemotas();
+  }, 30000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && navigator.onLine && Date.now() - (estado.remotasEm || 0) > 10000) buscarRemotas();
+  });
   // fechando ou trocando de app: tenta mandar o que falta (o que não for, continua guardado)
   window.addEventListener("pagehide", () => enviarPendentes());
 
