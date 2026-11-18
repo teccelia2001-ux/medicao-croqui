@@ -852,6 +852,10 @@
     return o.anotacoes;
   };
   const nomeDoPoste = (id) => pontoPorId(id)?.nome || "?";
+  /** Ponta do vão: o poste (ponto) ou, quando o vão foi traçado fora do poste (projeto
+   *  redesenhado), uma ponta livre — sem criar ponto — com o nome que o supervisor der. */
+  const pontaDoVao = (v, lado) => (v.vao[lado] ? nomeDoPoste(v.vao[lado]) : v.vao[lado + "Nome"] || "livre");
+  const nomeDoVao = (v) => `Vão ${pontaDoVao(v, "de")}–${pontaDoVao(v, "para")}`;
   /** giro da folha no croqui (0, 90, 180, 270), guardado no projeto da obra por folha */
   const giroDa = (o, pag) => Number(o?.projeto?.giros?.[pag]) || 0;
   /** "35 m · 4 esp." do vão (o que já foi informado) */
@@ -958,21 +962,20 @@
     const poste = (posteId && pontoPorId(posteId)) || postePerto(o, { ...q, pag: pos.pag }) || postePerto(o, pos) || (await posteExistente(o, pos));
     vn.ocupado = false;
     if (estado.cqVaoNovo !== vn) return;
-    if (!poste) {
-      avisar("Esse poste ainda não tem ponto. Toque no ponto de um poste já criado.", "erro");
-      return render();
-    }
-    if (vn.pts[0]?.id === poste.id) {
+    // sem ponto aqui: a ponta fica livre (fora do poste), sem criar ponto
+    if (poste && vn.pts[0]?.id === poste.id) {
       avisar("Esse é o poste inicial. Toque no poste final do vão.", "erro");
       return render();
     }
-    vn.pts.push({ pag: pos.pag, x: arred(q.x), y: arred(q.y), id: poste.id });
+    vn.pts.push({ pag: pos.pag, x: arred(q.x), y: arred(q.y), id: poste?.id || null });
+    if (!poste) avisar("Ponta fora do poste marcada (sem criar ponto).", "guardado");
     if (vn.pts.length < 2) { salvarAgora(); return render(); }
     const [a, b] = vn.pts;
     estado.cqVaoNovo = null;
     let v = vaoEntre(o, a.id, b.id);
     if (!v) {
-      v = { id: novoId(), nome: `Vão ${nomeDoPoste(a.id)}–${nomeDoPoste(b.id)}`, vao: { de: a.id, para: b.id, metros: "", espacadores: "" }, dia: "", obs: "", gps: null, itens: [], fotos: [] };
+      v = { id: novoId(), nome: "", vao: { de: a.id, para: b.id, metros: "", espacadores: "" }, dia: "", obs: "", gps: null, itens: [], fotos: [] };
+      v.nome = nomeDoVao(v);
       o.pontos.push(v);
     }
     v.vao.linha = [[a.x, a.y], [b.x, b.y]];
@@ -1016,7 +1019,14 @@
     const o = estado.obra;
     const nome = campo.value.trim().toUpperCase().slice(0, 30);
     if (!nome) return render(); // apagou: volta o que era
+    const lado = campo.id === "p-vao-de" ? "de" : "para";
     let q = postes(o).find((x) => x.nome.trim().toUpperCase() === nome);
+    if (!q && !v.vao[lado]) { // ponta fora do poste: só ganha o nome, sem criar ponto
+      v.vao[lado + "Nome"] = nome;
+      v.nome = nomeDoVao(v);
+      salvarAgora();
+      return render();
+    }
     if (!q) {
       // poste extra, que não está no projeto: entra na obra e ganha lugar ao remarcar a linha
       q = { id: novoId(), nome, dia: "", obs: "", gps: null, croqui: null, itens: [], fotos: [], extra: true };
@@ -1027,15 +1037,24 @@
     if (de === para) { avisar("O vão precisa de dois postes diferentes.", "erro"); return render(); }
     const outro = vaoEntre(o, de, para);
     if (outro && outro !== v) { avisar(`Já existe o ${outro.nome}.`, "erro"); return render(); }
+    const antes = v.vao.linha;
     Object.assign(v.vao, { de, para, linha: null });
-    v.nome = `Vão ${nomeDoPoste(de)}–${nomeDoPoste(para)}`;
+    v.nome = nomeDoVao(v);
     const a = pontoPorId(de)?.croqui, b = pontoPorId(para)?.croqui;
+    if ((!de || !para) && antes) {
+      // a outra ponta é livre: ela fica onde estava, e esta vai para o poste escolhido
+      const i = lado === "de" ? 0 : 1, c = pontoPorId(q.id)?.croqui;
+      v.vao.linha = antes.map((pt, k) => (k === i && c ? [c.x, c.y] : pt));
+      delete v.vao[lado + "Nome"];
+      salvarAgora();
+      return render();
+    }
     if (a && b) v.croqui = { pag: a.pag || 1, x: arred((a.x + b.x) / 2), y: arred((a.y + b.y) / 2) };
     salvarAgora();
     render();
     if (a && b) acharLinhaDoVao(v);
   }
-  const vaoEntre = (o, de, para) => o.pontos.find((p) => p.vao && ((p.vao.de === de && p.vao.para === para) || (p.vao.de === para && p.vao.para === de)));
+  const vaoEntre = (o, de, para) => (!de || !para ? null : o.pontos.find((p) => p.vao && ((p.vao.de === de && p.vao.para === para) || (p.vao.de === para && p.vao.para === de))));
   function terminarTraco(pts) {
     const o = estado.obra;
     if (!o || soLeitura(o)) return;
@@ -1368,8 +1387,8 @@
     const pags = o.projeto?.paginas || visor?.paginas || 1;
     const pag = Math.min(estado.cqPag, pags);
     const aj = estado.cqAjuste, vAj = aj && pontoPorId(aj.id), vn = estado.cqVaoNovo;
-    const dica = vn ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste <b>${vn.pts.length ? `final${vn.pts[0] ? ` (de ${esc(nomeDoPoste(vn.pts[0].id))})` : ""}` : "inicial"}</b> do vão</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
-      : vAj ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste ${aj.pts.length ? `de fim (<b>${esc(nomeDoPoste(vAj.vao.para))}</b>)` : `de início (<b>${esc(nomeDoPoste(vAj.vao.de))}</b>)`}, no quadradinho preto</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
+    const dica = vn ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no ${vn.pts.length ? `<b>fim</b> do vão (de ${esc(vn.pts[0].id ? nomeDoPoste(vn.pts[0].id) : "ponta livre")})` : "<b>início</b> do vão"}: no poste ou, fora dele, onde a linha vai</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
+      : vAj ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste ${aj.pts.length ? `de fim (<b>${esc(pontaDoVao(vAj, "para"))}</b>)` : `de início (<b>${esc(pontaDoVao(vAj, "de"))}</b>)`}, no quadradinho preto</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : estado.cqDesenho ? `<div class="cq-dica cq-dica-rascunho"><span>✏️ Rascunho: desenhe com um dedo · dois dedos movem</span><button type="button" class="link" data-acao="cq-desfazer">↶ Desfazer</button><button type="button" class="link" data-acao="cq-rascunho">Pronto</button></div>`
       : estado.cqNovo || sel || estado.cqNota ? "" : mover ? `<div class="cq-dica cq-dica-mover"><span>📌 Toque no croqui onde fica o <b>${esc(mover.nome)}</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : !o.projeto ? ""
@@ -1665,7 +1684,8 @@
     if (estado.cqVaoNovo) { // tocou na marca de um ponto: é esse poste
       const q = pontoPorId(id);
       if (q && !q.vao && q.croqui) return marcarPontaDoVao({ pag: q.croqui.pag || 1, x: q.croqui.x, y: q.croqui.y }, q.id);
-      return avisar("Toque num poste.", "guardado");
+      if (q?.croqui) return marcarPontaDoVao({ pag: q.croqui.pag || 1, x: q.croqui.x, y: q.croqui.y });
+      return avisar("Toque num poste ou num lugar vazio.", "guardado");
     }
     estado.cqNovo = null;
     if (String(id).startsWith("nota:")) {
@@ -2170,13 +2190,13 @@
       <div class="ponto-colunas"><div class="ponto-col">
       <fieldset class="conjunto" ${soLeitura(o) ? "disabled" : ""}>
       <section class="cartao dados">
-        ${p.geral ? `<p class="faixa faixa-geral">🧰 <b>Serviços da obra, sem ponto.</b> O que for lançado aqui soma no total da obra e sai na medição como <b>SERVIÇOS GERAIS</b>.</p>` : p.vao ? `<p class="faixa faixa-vao">📏 <b>Vão entre ${esc(nomeDoPoste(p.vao.de))} e ${esc(nomeDoPoste(p.vao.para))}</b></p>
+        ${p.geral ? `<p class="faixa faixa-geral">🧰 <b>Serviços da obra, sem ponto.</b> O que for lançado aqui soma no total da obra e sai na medição como <b>SERVIÇOS GERAIS</b>.</p>` : p.vao ? `<p class="faixa faixa-vao">📏 <b>Vão entre ${esc(pontaDoVao(p, "de"))} e ${esc(pontaDoVao(p, "para"))}</b></p>
         <div class="vao-campos">
-          <label class="campo">De<input id="p-vao-de" list="lista-postes" value="${esc(nomeDoPoste(p.vao.de))}" autocapitalize="characters" autocomplete="off" maxlength="30"></label>
-          <label class="campo">Para<input id="p-vao-para" list="lista-postes" value="${esc(nomeDoPoste(p.vao.para))}" autocapitalize="characters" autocomplete="off" maxlength="30"></label>
+          <label class="campo">De<input id="p-vao-de" list="lista-postes" value="${esc(p.vao.de ? nomeDoPoste(p.vao.de) : p.vao.deNome || "")}" placeholder="fora do poste" autocapitalize="characters" autocomplete="off" maxlength="30"></label>
+          <label class="campo">Para<input id="p-vao-para" list="lista-postes" value="${esc(p.vao.para ? nomeDoPoste(p.vao.para) : p.vao.paraNome || "")}" placeholder="fora do poste" autocapitalize="characters" autocomplete="off" maxlength="30"></label>
           <datalist id="lista-postes">${opcoesPostes(o)}</datalist>
         </div>
-        <small class="sub">Escolha o poste ou digite outro (ex.: P27A): poste que não existe é criado como extra.</small>
+        <small class="sub">Escolha o poste ou digite outro (ex.: P27A): poste que não existe é criado como extra.${!p.vao.de || !p.vao.para ? " Na ponta fora do poste, o nome digitado só aparece no vão (não cria ponto)." : ""}</small>
         <label class="campo">Metragem (m)<input id="p-metros" inputmode="decimal" data-num value="${esc(p.vao.metros || "")}" placeholder="Ex.: 35" autocomplete="off"></label>
         ${o.projeto ? `<button type="button" class="link link-remarcar" data-acao="vao-remarcar">📌 Remarcar a linha no croqui</button>` : ""}` : `<label class="campo">Ponto
           <input id="p-nome" value="${esc(p.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off">
@@ -2319,7 +2339,7 @@
           vaos: o.pontos.filter((v) => v.vao && naFolha(v.croqui, pag)).map((v) => {
             const ra = pontoPorId(v.vao.de)?.croqui, rb = pontoPorId(v.vao.para)?.croqui;
             const linha = v.vao.linha || (ra && rb ? [[ra.x, ra.y], [rb.x, rb.y]] : null);
-            return { x: v.croqui.x, y: v.croqui.y, linha, texto: `${nomeDoPoste(v.vao.de)}–${nomeDoPoste(v.vao.para)}${medidasVao(v) ? " · " + medidasVao(v) : ""}` };
+            return { x: v.croqui.x, y: v.croqui.y, linha, texto: `${pontaDoVao(v, "de")}–${pontaDoVao(v, "para")}${medidasVao(v) ? " · " + medidasVao(v) : ""}` };
           }),
           tracos: (an.tracos || []).filter((t) => t.pag === pag).map((t) => t.pts),
           notas: (an.notas || []).filter((n) => n.pag === pag).map((n) => ({ x: n.x, y: n.y, texto: n.texto })),
