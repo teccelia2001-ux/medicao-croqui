@@ -945,6 +945,21 @@
       const bw = x1 - x0 + 1, bh = y1 - y0 + 1, lado = Math.max(bw, bh) / escala; // lado em pontos
       // quadrado cheio de 2 a 20 pontos (as letras pretas são finas: enchem pouco a caixa)
       if (Math.max(bw, bh) < 7 || lado < 1.5 || lado > 20 || bw / bh < 0.5 || bw / bh > 2 || n / (bw * bh) < 0.55) continue;
+      // tronco de árvore (escuro e cheio como o poste): tem a copa verde em volta. Fica de fora
+      {
+        const m = Math.max(bw, bh) * 1.6;
+        const ax = Math.max(0, Math.floor(x0 - m)), bx = Math.min(w - 1, Math.ceil(x1 + m));
+        const ay = Math.max(0, Math.floor(y0 - m * 1.4)), by = Math.min(h - 1, Math.ceil(y1 + m * 0.6));
+        let verde = 0, total = 0;
+        for (let yy = ay; yy <= by; yy += 2) {
+          for (let xx = ax; xx <= bx; xx += 2) {
+            const i = (yy * w + xx) * 4;
+            total++;
+            if (d[i + 1] > d[i] + 40 && d[i + 1] > d[i + 2] + 30 && d[i + 1] > 70) verde++;
+          }
+        }
+        if (total && verde / total > 0.2) continue;
+      }
       const cx = (x0 + x1 + 1) / 2, cy = (y0 + y1 + 1) / 2;
       achados.push({
         x: Math.round((pos.x + (cx - w / 2) / escala / f.W) * 1e5) / 1e5,
