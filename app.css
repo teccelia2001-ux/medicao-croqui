@@ -1068,3 +1068,47 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-analise-erro { background: #b91c1c; border-color: #b91c1c; }
 .faixa-analise > span:first-child { flex: 1 1 180px; }
 .faixa-fila { background: #fffbeb; color: #78350f; }
+
+/* tablet e computador: o lançamento do ponto ao lado do croqui (o croqui continua à vista) */
+.cq-painel {
+  --painel: min(460px, 48vw);
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--painel);
+  z-index: 6;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--fundo, #f4f6f9);
+  border-left: 1px solid var(--borda);
+  box-shadow: -6px 0 18px rgba(15, 23, 42, 0.12);
+}
+.com-painel .cq-visor { right: min(460px, 48vw); }
+.com-painel .cq-dica, .com-painel .cq-folhas { left: calc((100% - min(460px, 48vw)) / 2); }
+.com-painel .cq-controles { right: auto; left: 10px; }
+/* a tela do ponto dentro do painel: uma coluna só, rolando junto, rodapé no pé do painel */
+.cq-painel .pagina,
+.cq-painel .pagina-larga:has(> .ponto-colunas) {
+  max-width: none;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+  display: block;
+  padding: 8px 14px 0;
+}
+.cq-painel .pagina-form { padding-bottom: 0; }
+.cq-painel .ponto-colunas { display: flex !important; flex-direction: column; gap: 14px; }
+.cq-painel .ponto-colunas > .ponto-col,
+.cq-painel .ponto-colunas > .ponto-col:last-child { position: static; overflow: visible; min-height: 0; padding: 0; }
+.cq-painel .rapidos { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+.cq-painel .rodape {
+  position: sticky;
+  bottom: 0;
+  display: block;
+  margin: 14px -14px 0;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.cq-painel .rodape > * { max-width: none; margin: 0; }
+.cq-painel .rodape-total { margin-bottom: 8px !important; }
+.cq-painel .rodape > .botao { width: 100%; min-width: 0; }

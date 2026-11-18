@@ -65,6 +65,18 @@
   /** P1, P2 ... P10 na ordem certa (número por número, não letra por letra) */
   const cmpPonto = (a, b) => String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR", { numeric: true, sensitivity: "base" });
   const ponto = () => estado.obra?.pontos.find((p) => p.id === estado.pontoId);
+  // tablet e computador: o lançamento do ponto abre ao lado, com o croqui à vista (18/11/2026)
+  const TELA_LARGA = matchMedia("(min-width: 760px)");
+  const painelLateral = () => TELA_LARGA.matches;
+  /** a tela do ponto está à vista (sozinha, ou no painel ao lado do croqui) */
+  const vendoPonto = () => estado.tela === "ponto" || (estado.tela === "croqui" && !!estado.cqPainel);
+  /** abre o ponto: no croqui de tablet/computador, no painel ao lado; senão, na tela dele */
+  function abrirPonto(id) {
+    if (painelLateral() && estado.tela === "croqui" && estado.obra?.projeto) {
+      return irPara("croqui", { cqPainel: id, pontoId: id, cqSel: id, cqNovo: null, cqNota: null });
+    }
+    return irPara("ponto", { pontoId: id });
+  }
   /** obra de outro supervisor: abre só para consulta e para gerar a medição */
   const soLeitura = (o) => o && o.dono === false;
 
@@ -98,7 +110,7 @@
     await salvarAgora();
     // outro ponto (ou outra tela): a pesquisa dos serviços lançados começa limpa
     if (tela !== "ponto" || extra.pontoId !== estado.pontoId) estado.filtroItens = "";
-    if (tela !== "croqui") { estado.cqNovo = null; estado.cqNota = null; estado.cqDesenho = false; estado.cqAjuste = null; if (!("cqMover" in extra)) estado.cqMover = null; }
+    if (tela !== "croqui") { estado.cqNovo = null; estado.cqNota = null; estado.cqDesenho = false; estado.cqAjuste = null; estado.cqPainel = null; if (!("cqMover" in extra)) estado.cqMover = null; }
     Object.assign(estado, { tela, busca: "", escolhido: null, qtd: "", arquivo: null }, extra);
     if (tela !== "obra-form") estado.projetoNovo = null;
     if (tela === "inicio") {
@@ -149,7 +161,7 @@
       if (f) estado.miniaturas.set(id, URL.createObjectURL(f.blob));
     }
     faltam.forEach((id) => carregando.delete(id));
-    if (estado.obra === obra && (estado.tela === "ponto" || (estado.tela === "croqui" && estado.cqSel))) render();
+    if (estado.obra === obra && (vendoPonto() || (estado.tela === "croqui" && estado.cqSel))) render();
   }
 
   // ------------------------------------------------------------------ envio ao banco
@@ -324,7 +336,7 @@
   // tela que estava desenhada: refazendo a mesma (lançou um serviço, abriu a quantidade...)
   // a rolagem fica onde estava, na página e em cada coluna (no computador cada uma rola sozinha)
   let desenhada = { tela: null, ponto: null };
-  const ROLAM = ".ponto-col, .medicao-col";
+  const ROLAM = ".ponto-col, .medicao-col, .cq-painel";
 
   function render() {
     const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao, config: telaConfig };
@@ -339,7 +351,7 @@
     desenhada = { tela: estado.tela, ponto: estado.pontoId };
     document.body.classList.toggle("com-croqui", estado.tela === "croqui");
     if (estado.tela === "croqui") { montarCroqui(); acimaDaBarra(); }
-    if (estado.tela === "ponto") {
+    if (vendoPonto()) {
       const p = ponto();
       if (p) carregarMiniaturas(p.fotos);
       // na mesma hora do toque: assim o celular abre o teclado
@@ -1214,9 +1226,17 @@
     area.style.setProperty("--baixo", `${Math.round(h)}px`);
   }
   window.addEventListener("resize", () => { if (estado.tela === "croqui") acimaDaBarra(); });
+  TELA_LARGA.addEventListener?.("change", () => { if (estado.tela === "croqui" && estado.cqPainel) render(); });
 
   function telaCroqui() {
     const o = estado.obra;
+    // virou celular em pé (ou a janela encolheu) com o painel aberto: o ponto vai para a tela dele
+    if (estado.cqPainel && !painelLateral()) {
+      estado.tela = "ponto";
+      estado.cqPainel = null;
+      return telaPonto();
+    }
+    const painel = estado.cqPainel && ponto() ? `<aside class="cq-painel" id="cq-painel" aria-label="Lançamento do ponto">${telaPonto()}</aside>` : "";
     const t = M.totaisObra(o);
     const reais = postes(o);
     const marcados = reais.filter((p) => p.croqui).length;
@@ -1231,12 +1251,12 @@
       : !o.projeto ? ""
         : soLeitura(o) ? (marcados ? "" : `<div class="cq-dica">Nenhum ponto marcado no croqui.</div>`)
           : analiseHtml(o) || (!marcados ? `<div class="cq-dica">Toque no poste para lançar os serviços dele</div>` : "");
-    const baixo = sel ? folhaPontoCroqui(sel) : estado.cqNota ? folhaNotaCroqui() : estado.cqNovo ? folhaNovoCroqui() : `<div class="cq-barra">
+    const baixo = painel ? "" : sel ? folhaPontoCroqui(sel) : estado.cqNota ? folhaNotaCroqui() : estado.cqNovo ? folhaNovoCroqui() : `<div class="cq-barra">
         <div class="rodape-total"><span>Total da obra</span><b>${M.fmtMoeda(t.valor)}</b></div>
         ${o.projeto ? `<button type="button" class="botao botao-claro botao-croqui" data-acao="cq-baixar" ${estado.baixandoCroqui ? "disabled" : ""} title="Baixar o croqui com os pontos, vãos, anotações e rascunho">${estado.baixandoCroqui ? "⏳" : "⬇"} Croqui</button>` : ""}
         <button type="button" class="botao" data-acao="medicao" ${o.pontos.some((p) => p.itens.length) ? "" : "disabled"}>Gerar medição</button>
       </div>`;
-    return `<div class="pagina-croqui">
+    return `<div class="pagina-croqui${painel ? " com-painel" : ""}">
       <header class="cq-topo">
         <button type="button" class="voltar" data-acao="inicio">‹ Obras</button>
         <div class="cq-titulo"><b>Obra ${esc(o.numero)}</b><small>${plural(marcados, "ponto", "pontos")} no croqui${soLeitura(o) ? " · consulta" : ""}</small></div>
@@ -1256,6 +1276,7 @@
           ${o.projeto ? `<button type="button" class="cq-girar" data-acao="cq-girar" aria-label="Girar o croqui" title="Girar o croqui">⟳</button>` : ""}
           ${o.projeto && !soLeitura(o) ? `<button type="button" class="cq-lapis${estado.cqDesenho ? " ativo" : ""}" data-acao="cq-rascunho" aria-label="Rascunho: desenhar no croqui" aria-pressed="${!!estado.cqDesenho}" title="Rascunho">✏️</button>` : ""}
         </div>
+        ${painel}
       </div>
       ${baixo}
     </div>`;
@@ -1446,6 +1467,8 @@
       return render();
     }
     if (estado.cqAjuste) return ajustarVao(estado.cqAjuste, { pag: estado.cqPag, x: pos.x, y: pos.y });
+    // painel do ponto aberto: o toque num lugar vazio fecha ele e já abre o "Novo ponto aqui"
+    if (estado.cqPainel) { estado.cqPainel = null; estado.cqSel = null; salvarAgora(); }
     // com o resumo de um ponto (ou uma anotação) aberto, o primeiro toque fora só fecha
     if (estado.cqSel || estado.cqNota) { estado.cqSel = null; estado.cqNota = null; return render(); }
     if (soLeitura(o)) return;
@@ -1512,6 +1535,8 @@
       return render();
     }
     estado.cqNota = null;
+    // painel aberto: tocar em outro ponto troca o painel para ele
+    if (estado.cqPainel && painelLateral()) return abrirPonto(id);
     estado.cqSel = id;
     estado.cqRevelar = true;
     render();
@@ -2750,7 +2775,7 @@
     const p = { id: novoId(), nome: nome || proximoNome(o), dia: hoje(), obs: "", gps: null, croqui, itens: [], fotos: [] };
     o.pontos.push(p);
     salvarAgora();
-    irPara("ponto", { pontoId: p.id });
+    abrirPonto(p.id);
     marcarGpsSilencioso(p);
   }
 
@@ -2761,7 +2786,7 @@
         if (p.gps) return;
         p.gps = { lat: pos.coords.latitude, lng: pos.coords.longitude, prec: pos.coords.accuracy, em: new Date().toISOString() };
         salvarAgora();
-        if (estado.tela === "ponto" && estado.pontoId === p.id) render();
+        if (vendoPonto() && estado.pontoId === p.id) render();
         // foto tirada antes de a localização chegar ganha a UTM na faixa
         if (estado.obra?.pontos.includes(p)) refazerFaixas(estado.obra, [p]);
       },
@@ -2945,6 +2970,14 @@
       case "nova-obra": return novaObra();
       // ---------- croqui
       case "croqui": {
+        // painel do ponto ao lado do croqui: fecha o painel (o ponto fica escolhido)
+        if (estado.tela === "croqui" && estado.cqPainel) {
+          const id = estado.cqPainel;
+          estado.cqPainel = null;
+          estado.cqSel = id;
+          await salvarAgora();
+          return render();
+        }
         // vindo de um ponto: o croqui abre com o resumo dele
         const deOnde = estado.tela === "ponto" ? ponto() : null;
         return irPara("croqui", { cqSel: deOnde && !deOnde.geral ? deOnde.id : estado.cqSel, cqRevelar: !!deOnde });
@@ -3033,7 +3066,7 @@
       case "salvar-obra": return salvarObraForm();
       case "obra": return irPara("obra");
       case "novo-ponto": return novoPonto();
-      case "abrir-ponto": return irPara("ponto", { pontoId: alvo.dataset.id });
+      case "abrir-ponto": return abrirPonto(alvo.dataset.id);
       case "abrir-geral": {
         // serviços da obra sem ponto: guardado como um ponto marcado com `geral`, criado no primeiro toque
         let g = o.pontos.find((p) => p.geral);
@@ -3047,7 +3080,7 @@
       case "ponto-prox": {
         const lista = M.pontosReais(o.pontos);
         const idx = lista.findIndex((p) => p.id === estado.pontoId) + (alvo.dataset.acao === "ponto-ant" ? -1 : 1);
-        if (lista[idx]) return irPara("ponto", { pontoId: lista[idx].id });
+        if (lista[idx]) return abrirPonto(lista[idx].id);
         return;
       }
       case "cq-excluir": { // do resumo do ponto no croqui, sem abrir o ponto
@@ -3138,7 +3171,7 @@
           acharLinhaDoVao(v); // de quadradinho a quadradinho, por cima da rede
         }
         estado.cqNovo = null;
-        return irPara("ponto", { pontoId: v.id });
+        return abrirPonto(v.id);
       }
       case "cq-anotar": {
         const n = estado.cqNovo;
