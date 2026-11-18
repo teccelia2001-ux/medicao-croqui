@@ -223,6 +223,37 @@
     return [Math.max(dx, Math.min(0, dx + w)), Math.max(dy, Math.min(0, dy + h))];
   }
 
+  // ------------------------------------------------------------------ desenho guardado
+  // O projeto desenhado na tela fica guardado no aparelho (JPEG, as 6 folhas mais recentes):
+  // ao abrir de novo o croqui aparece na hora, sem o pdf.js desenhar tudo (no celular levava
+  // segundos). O zoom de perto continua sendo desenhado do PDF.
+  const IMAGENS_GUARDADAS = 6;
+  async function imagemGuardada(k) {
+    try {
+      const v = window.Banco ? await Banco.ler(k, null) : null;
+      return v instanceof Blob ? v : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  async function guardarImagem(k, cv) {
+    try {
+      if (!window.Banco) return;
+      const blob = await new Promise((ok) => cv.toBlob(ok, "image/jpeg", 0.86));
+      if (!blob) return;
+      await Banco.gravar(k, blob);
+      const lista = (await Banco.ler("croqui_imagens", [])).filter((x) => x !== k);
+      lista.push(k);
+      while (lista.length > IMAGENS_GUARDADAS) await Banco.gravar(lista.shift(), null);
+      await Banco.gravar("croqui_imagens", lista);
+    } catch (e) {
+      /* sem espaço: segue sem guardar */
+    }
+  }
+  // a tela desenhando o projeto: a leitura dos (P) espera (as duas juntas disputavam o celular)
+  let desenhandoTela = 0;
+  const esperarTela = async () => { while (desenhandoTela > 0) await new Promise((r) => setTimeout(r, 150)); };
+
   // ------------------------------------------------------------------ visor
   class Visor {
     constructor() {
@@ -297,24 +328,53 @@
       this.det = null;
       this.detalhe.hidden = true;
       this.msg("Desenhando o projeto…");
-      const tarefa = f.desenhar(this.base.getContext("2d"), this.sb, 0, 0);
-      this._tarefaBase = tarefa;
+      desenhandoTela++;
       try {
-        await tarefa.promise;
-      } catch (e) {
-        if (pedido !== this._pedido) return; // trocou de folha no meio
-        throw e;
+        // já desenhado antes neste aparelho: aparece na hora
+        const kImg = `croqui-img|${chave}|${pag}|${giro}|${this.base.width}x${this.base.height}`;
+        const salvo = await imagemGuardada(kImg);
+        if (pedido !== this._pedido) return;
+        let pronto = false;
+        if (salvo && window.createImageBitmap) {
+          try {
+            const bmp = await createImageBitmap(salvo);
+            if (pedido !== this._pedido) return;
+            this.base.getContext("2d").drawImage(bmp, 0, 0, this.base.width, this.base.height);
+            bmp.close?.();
+            pronto = true;
+          } catch (e) { /* imagem estragada: desenha do PDF */ }
+        }
+        if (!pronto) {
+          const tarefa = f.desenhar(this.base.getContext("2d"), this.sb, 0, 0);
+          this._tarefaBase = tarefa;
+          try {
+            await tarefa.promise;
+          } catch (e) {
+            if (pedido !== this._pedido) return; // trocou de folha no meio
+            throw e;
+          }
+          if (pedido !== this._pedido) return;
+          setTimeout(() => { if (pedido === this._pedido) guardarImagem(kImg, this.base); }, 600);
+        }
+      } finally {
+        desenhandoTela--;
       }
-      if (pedido !== this._pedido) return;
       if (this._dadosCamada) this.camada(this._dadosCamada); else this._desenharCamada();
-      if (this._listaMarcas) this.marcas(this._listaMarcas);
-      this._tinta = mapaTinta(this.base); // onde tem desenho: os nomes dos pontos fogem dele
+      this._tinta = null;
       this._sNomes = null;
       this.msg("");
       this.base.hidden = false;
       this._ajustado = false;
       this._mexeu = false;
+      if (this._listaMarcas) this.marcas(this._listaMarcas);
       this.ajustar();
+      // onde tem desenho (para os nomes dos pontos fugirem dele): depois de o croqui aparecer
+      setTimeout(() => {
+        if (pedido !== this._pedido) return;
+        this._tinta = mapaTinta(this.base);
+        this._sNomes = null;
+        this._posicionarMarcas();
+      }, 30);
     }
 
     /** escala com a folha inteira na tela */
@@ -1856,6 +1916,7 @@
     const achados = [...parciais];
     for (const [i, g] of grupos.entries()) {
       if (i < inicio) continue;
+      await esperarTela();
       aoAndar(i, grupos.length);
       const r = await lerPoste(proj, { pag, x: g.x, y: g.y });
       // num círculo ou símbolo verde o OCR acaba lendo um (P) vizinho cortado na borda
