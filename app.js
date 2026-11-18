@@ -763,6 +763,8 @@
     return o.anotacoes;
   };
   const nomeDoPoste = (id) => pontoPorId(id)?.nome || "?";
+  /** giro da folha no croqui (0, 90, 180, 270), guardado no projeto da obra por folha */
+  const giroDa = (o, pag) => Number(o?.projeto?.giros?.[pag]) || 0;
   /** "35 m · 4 esp." do vão (o que já foi informado) */
   const medidasVao = (v) => (v.vao.metros ? `${v.vao.metros} m` : "");
   /** Vão entre dois postes desta folha em que o toque caiu: o toque fica "entre" os dois (na
@@ -997,6 +999,7 @@
           <button type="button" data-acao="cq-zoom" data-f="1.6" aria-label="Aproximar">+</button>
           <button type="button" data-acao="cq-zoom" data-f="0.625" aria-label="Afastar">−</button>
           <button type="button" data-acao="cq-ajustar" aria-label="Folha inteira">⤢</button>
+          ${o.projeto ? `<button type="button" class="cq-girar" data-acao="cq-girar" aria-label="Girar o croqui" title="Girar o croqui">⟳</button>` : ""}
           ${o.projeto && !soLeitura(o) ? `<button type="button" class="cq-lapis${estado.cqDesenho ? " ativo" : ""}" data-acao="cq-rascunho" aria-label="Rascunho: desenhar no croqui" aria-pressed="${!!estado.cqDesenho}" title="Rascunho">✏️</button>` : ""}
         </div>
       </div>
@@ -1140,7 +1143,7 @@
       if (!proj) {
         return v.msg(navigator.onLine ? "Não deu para baixar o projeto desta obra. Tente de novo." : "Sem internet: o projeto desta obra ainda não está neste celular.");
       }
-      await v.carregar(proj, estado.cqPag);
+      await v.carregar(proj, estado.cqPag, giroDa(o, estado.cqPag));
       if (estado.obra !== o || estado.tela !== "croqui") return;
       if (v.paginas && o.projeto.paginas !== v.paginas) {
         o.projeto.paginas = v.paginas;
@@ -1878,7 +1881,7 @@
       const folhas = [];
       for (let pag = 1; pag <= total; pag++) {
         const f = {
-          pag,
+          pag, giro: giroDa(o, pag),
           marcas: postes(o).filter((p) => naFolha(p.croqui, pag)).map((p) => ({ nome: p.nome, x: p.croqui.x, y: p.croqui.y, cor: p.itens.length ? Croqui.COR_COM : Croqui.COR_SEM })),
           vaos: o.pontos.filter((v) => v.vao && naFolha(v.croqui, pag)).map((v) => {
             const ra = pontoPorId(v.vao.de)?.croqui, rb = pontoPorId(v.vao.para)?.croqui;
@@ -2459,7 +2462,9 @@
         avisar("Não foi possível guardar o projeto no celular. Libere espaço.", "erro");
         return;
       }
-      o.projeto = { nome: pn.nome, tipo: pn.tipo, tamanho: pn.blob.size, em, ...(pn.paginas ? { paginas: pn.paginas } : {}) };
+      // folhas acrescentadas: as que já existiam continuam giradas como estavam
+      const giros = pn.modo === "adicionar" && o.projeto?.giros ? { giros: o.projeto.giros } : {};
+      o.projeto = { nome: pn.nome, tipo: pn.tipo, tamanho: pn.blob.size, em, ...(pn.paginas ? { paginas: pn.paginas } : {}), ...giros };
       if (pn.modo !== "adicionar") o.anotacoes = null; // projeto trocado: as anotações eram do antigo
       estado.projetoNovo = null;
       estado.cqPag = 1;
@@ -2916,6 +2921,15 @@
         return avisar("Nada para desfazer nesta folha.", "guardado");
       }
       case "cq-baixar": return baixarCroqui();
+      case "cq-girar": { // 90° no sentido do relógio, só esta folha (fica guardado na obra)
+        if (!o?.projeto) return;
+        const pag = estado.cqPag, g = (giroDa(o, pag) + 90) % 360;
+        const giros = { ...(o.projeto.giros || {}) };
+        if (g) giros[pag] = g; else delete giros[pag];
+        o.projeto.giros = giros;
+        if (!soLeitura(o)) salvarAgora();
+        return render();
+      }
       case "dep-rapidos": // lista pré-definida da LM ou da LV
         depRapidos = alvo.dataset.dep === "LV" ? "LV" : "LM";
         try { localStorage.setItem("croqui_rapidos", depRapidos); } catch (e) { /* sem guardar */ }

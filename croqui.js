@@ -117,6 +117,40 @@
     return f;
   }
 
+  // ------------------------------------------------------------------ croqui girado
+  // O giro é só da tela (e do croqui baixado): os pontos, vãos, anotações e rascunho ficam
+  // guardados na posição da folha original, então girar e voltar não muda nada.
+  const giroValido = (g) => ([90, 180, 270].includes(Number(g)) ? Number(g) : 0);
+  /** posição na folha (fração) -> posição na folha girada `g` graus no sentido do relógio */
+  function paraGirada(x, y, g) {
+    return g === 90 ? [1 - y, x] : g === 180 ? [1 - x, 1 - y] : g === 270 ? [y, 1 - x] : [x, y];
+  }
+  /** o contrário: posição na folha girada -> posição na folha original */
+  function daGirada(u, v, g) {
+    return g === 90 ? [v, 1 - u] : g === 180 ? [1 - u, 1 - v] : g === 270 ? [1 - v, u] : [u, v];
+  }
+  /** a folha `f` girada `g` graus: mesmo jeito de desenhar, com W e H da folha girada */
+  function folhaGirada(f, g) {
+    g = giroValido(g);
+    if (!g) return f;
+    const W = g % 180 ? f.H : f.W, H = g % 180 ? f.W : f.H;
+    return {
+      W, H, giro: g, original: f,
+      desenhar(ctx, escala, dx, dy, semTela) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        // o pixel (a, b) da folha desenhada reta vai para o lugar dele na folha girada
+        const fw = f.W * escala, fh = f.H * escala;
+        const m = g === 90 ? [0, 1, -1, 0, fh - dx, -dy] : g === 180 ? [-1, 0, 0, -1, fw - dx, fh - dy] : [0, -1, 1, 0, -dx, fw - dy];
+        ctx.setTransform(...m);
+        const t = f.desenhar(ctx, escala, 0, 0, semTela);
+        return { promise: t.promise.finally(() => ctx.restore()), cancelar: t.cancelar };
+      },
+    };
+  }
+
   // ------------------------------------------------------------------ nome do ponto no branco
   /** Mapa de onde tem desenho num canvas (reduzido `f` vezes, em soma acumulada): diz
    *  rápido quanto desenho cai dentro de um retângulo. */
@@ -208,6 +242,7 @@
       this._camada = { linhas: [], tracos: [] }; // vãos e rascunho desta folha
       this._desenho = null; // modo rascunho: (pontos [[x, y]...] em fração da folha) => {}
       this.s = 1; this.tx = 0; this.ty = 0; this.W = 0; this.H = 0;
+      this.giro = 0; // por dentro tudo é na folha girada; quem usa o visor fala na folha original
       this.sb = 1; // escala da imagem base
       this.det = null; // {s, tx, ty} de quando o detalhe foi desenhado
       this.pos = null; // alfinete {x, y}
@@ -225,19 +260,21 @@
       this.msgEl.hidden = !texto;
     }
 
-    /** Abre o projeto na folha pedida. Mesmo projeto e mesma folha: não faz nada. */
-    carregar(proj, pag = 1) {
+    /** Abre o projeto na folha pedida, girada `giro` graus (0, 90, 180, 270). Mesmo projeto,
+     *  mesma folha e mesmo giro: não faz nada. */
+    carregar(proj, pag = 1, giro = 0) {
       const chave = chaveDe(proj);
-      if (this.chave === chave && this.pag === pag) return Promise.resolve();
+      giro = giroValido(giro);
+      if (this.chave === chave && this.pag === pag && this.giro === giro) return Promise.resolve();
       // o mesmo pedido já está em andamento (a tela foi redesenhada no meio): espera ele
-      if (this._emCurso && this._emCurso.chave === chave && this._emCurso.pag === pag) return this._emCurso.promise;
-      const em = { chave, pag };
-      em.promise = this._carregar(proj, pag, chave).finally(() => { if (this._emCurso === em) this._emCurso = null; });
+      if (this._emCurso && this._emCurso.chave === chave && this._emCurso.pag === pag && this._emCurso.giro === giro) return this._emCurso.promise;
+      const em = { chave, pag, giro };
+      em.promise = this._carregar(proj, pag, chave, giro).finally(() => { if (this._emCurso === em) this._emCurso = null; });
       this._emCurso = em;
       return em.promise;
     }
 
-    async _carregar(proj, pag, chave) {
+    async _carregar(proj, pag, chave, giro = 0) {
       const pedido = (this._pedido = {});
       this._tarefaBase?.cancelar();
       if (this.chave !== chave) {
@@ -247,9 +284,9 @@
       this.msg("Abrindo o projeto…");
       const doc = await abrir(proj);
       pag = Math.min(Math.max(1, pag), doc.paginas);
-      const f = await folha(doc, pag);
+      const f = folhaGirada(await folha(doc, pag), giro);
       if (pedido !== this._pedido) return; // pediram outro no meio do caminho
-      this.doc = doc; this.f = f; this.pag = pag; this.chave = chave;
+      this.doc = doc; this.f = f; this.pag = pag; this.chave = chave; this.giro = giro;
       this.W = f.W; this.H = f.H;
       this.sb = Math.min(BASE_LADO / Math.max(f.W, f.H), Math.sqrt(BASE_AREA / (f.W * f.H)));
       this.base.width = Math.round(f.W * this.sb);
@@ -269,7 +306,8 @@
         throw e;
       }
       if (pedido !== this._pedido) return;
-      this._desenharCamada();
+      if (this._dadosCamada) this.camada(this._dadosCamada); else this._desenharCamada();
+      if (this._listaMarcas) this.marcas(this._listaMarcas);
       this._tinta = mapaTinta(this.base); // onde tem desenho: os nomes dos pontos fogem dele
       this._sNomes = null;
       this.msg("");
@@ -310,6 +348,7 @@
     /** põe o ponto (fração da folha) no meio da tela, aproximando até `vezes` a folha inteira */
     centralizar(pos, vezes = 4) {
       if (!pos || !this.W) return;
+      { const [x, y] = paraGirada(pos.x, pos.y, this.giro); pos = { x, y }; }
       this.s = Math.max(this.s, this.sMin * vezes);
       this.tx = this.cw / 2 - pos.x * this.W * this.s;
       this.ty = this.ch / 2 - pos.y * this.H * this.s;
@@ -321,6 +360,7 @@
      *  `baixo` px da parte de baixo (celular em pé) ou `direita` px da direita (deitado) */
     revelar(pos, { baixo = 0, direita = 0 } = {}) {
       if (!pos || !this.W) return;
+      { const [x, y] = paraGirada(pos.x, pos.y, this.giro); pos = { x, y }; }
       const x = this.tx + pos.x * this.W * this.s, y = this.ty + pos.y * this.H * this.s;
       const altura = this.ch - baixo, largura = this.cw - direita;
       if (y > altura - 36 || y < 70) this.ty += Math.max(90, altura / 2) - y;
@@ -332,7 +372,15 @@
     /** O que vai desenhado por cima do projeto nesta folha (em fração da folha):
      *  linhas [{ x1, y1, x2, y2, classe }] (vãos) e tracos [{ pts: [[x, y]...], classe }] (rascunho). */
     camada(dados) {
-      this._camada = { linhas: dados?.linhas || [], tracos: dados?.tracos || [] };
+      this._dadosCamada = dados;
+      const g = this.giro, gi = (x, y) => paraGirada(x, y, g);
+      this._camada = {
+        linhas: (dados?.linhas || []).map((l) => {
+          const [x1, y1] = gi(l.x1, l.y1), [x2, y2] = gi(l.x2, l.y2);
+          return { ...l, x1, y1, x2, y2 };
+        }),
+        tracos: (dados?.tracos || []).map((t) => ({ ...t, pts: t.pts.map(([x, y]) => gi(x, y)) })),
+      };
       this._desenharCamada();
     }
     _desenharCamada() {
@@ -351,7 +399,11 @@
 
     /** pontos marcados nesta folha: [{ id, nome, x, y, classe }] */
     marcas(lista) {
-      this.marcasEl.innerHTML = lista.map((m) => `<button type="button" class="cq-marca ${m.classe || ""}" data-id="${esc(m.id)}" data-x="${m.x}" data-y="${m.y}" aria-label="${esc(m.nome)}"><i></i><b class="cq-guia" hidden></b><span>${esc(m.nome)}</span></button>`).join("");
+      this._listaMarcas = lista;
+      this.marcasEl.innerHTML = lista.map((m) => {
+        const [x, y] = paraGirada(m.x, m.y, this.giro);
+        return `<button type="button" class="cq-marca ${m.classe || ""}" data-id="${esc(m.id)}" data-x="${x}" data-y="${y}" aria-label="${esc(m.nome)}"><i></i><b class="cq-guia" hidden></b><span>${esc(m.nome)}</span></button>`;
+      }).join("");
       this._medidas = null; // tamanho dos nomes e das bolinhas: mede de novo
       this._sNomes = null;
       this._posicionarMarcas();
@@ -400,6 +452,7 @@
 
     /** alfinete provisório (onde o supervisor tocou), ou null para tirar */
     alfinete(pos) {
+      if (pos) { const [x, y] = paraGirada(pos.x, pos.y, this.giro); pos = { x, y }; }
       this.pos = pos;
       this.alfineteEl.hidden = !pos;
       this._posicionarMarcas();
@@ -407,13 +460,16 @@
     /** fração da folha embaixo do ponto da tela, presa na folha (para o rascunho) */
     _naFolha(cx, cy) {
       const lim = (v) => Math.max(0, Math.min(1, v));
-      return [Math.round(lim((cx - this.tx) / this.s / this.W) * 1e5) / 1e5, Math.round(lim((cy - this.ty) / this.s / this.H) * 1e5) / 1e5];
+      const [x, y] = daGirada(lim((cx - this.tx) / this.s / this.W), lim((cy - this.ty) / this.s / this.H), this.giro);
+      return [Math.round(x * 1e5) / 1e5, Math.round(y * 1e5) / 1e5];
     }
 
     /** fração da folha embaixo do ponto da tela (cx, cy); null se caiu fora da folha */
     paraFolha(cx, cy) {
-      const x = (cx - this.tx) / this.s / this.W, y = (cy - this.ty) / this.s / this.H;
-      return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
+      const u = (cx - this.tx) / this.s / this.W, v = (cy - this.ty) / this.s / this.H;
+      if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+      const [x, y] = daGirada(u, v, this.giro);
+      return { x, y };
     }
 
     // ---------------------------------------------------------------- desenho
@@ -553,7 +609,7 @@
           gesto.ult = p;
           const r = rel(p);
           gesto.pts.push(this._naFolha(r.x, r.y));
-          this._vivo?.setAttribute("points", gesto.pts.map(([x, y]) => `${x * this.W},${y * this.H}`).join(" "));
+          this._vivo?.setAttribute("points", gesto.pts.map(([x, y]) => { const [u, v] = paraGirada(x, y, this.giro); return `${u * this.W},${v * this.H}`; }).join(" "));
         } else if (gesto?.tipo === "arrasto" && dedos.size === 1) {
           if (toque && Math.hypot(p.x - toque.x, p.y - toque.y) > 9) toque = null;
           if (toque) return; // ainda pode ser um toque
@@ -668,9 +724,14 @@
   /** Imagem (JPEG) da folha ou de um pedaço dela, com os pontos marcados.
    *  `recorte`: { x, y } fração da folha no centro, `largura` fração da largura da folha
    *  e `proporcao` largura/altura do pedaço. `marcas`: [{ nome, x, y, cor, destaque }]. */
-  async function imagem(proj, { pag = 1, marcas = [], recorte = null, px = 2400, canvas = false } = {}) {
+  async function imagem(proj, { pag = 1, marcas = [], recorte = null, px = 2400, canvas = false, giro = 0 } = {}) {
     const doc = await abrir(proj);
-    const f = await folha(doc, Math.min(Math.max(1, pag), doc.paginas));
+    giro = giroValido(giro);
+    const f = folhaGirada(await folha(doc, Math.min(Math.max(1, pag), doc.paginas)), giro);
+    if (giro) {
+      marcas = marcas.map((m) => { const [x, y] = paraGirada(m.x, m.y, giro); return { ...m, x, y }; });
+      if (recorte) { const [x, y] = paraGirada(recorte.x, recorte.y, giro); recorte = { ...recorte, x, y }; }
+    }
     let escala, dx = 0, dy = 0, w, h;
     if (recorte) {
       const lw = recorte.largura * f.W;
@@ -752,7 +813,8 @@
       cor: p === destaque ? COR_DESTAQUE : p.itens.length ? COR_COM : COR_SEM, destaque: p === destaque,
     }));
     const geral = [];
-    for (const pag of pags) geral.push({ pag, total, ...(await imagem(proj, { pag, marcas: marcasDa(pag) })) });
+    const giroDe = (pag) => giroValido(obra.projeto?.giros?.[pag]);
+    for (const pag of pags) geral.push({ pag, total, ...(await imagem(proj, { pag, marcas: marcasDa(pag), giro: giroDe(pag) })) });
     const porPonto = new Map();
     if (recortes) {
       for (const p of pontos) {
@@ -760,7 +822,7 @@
         porPonto.set(p.id, {
           pag,
           ...(await imagem(proj, {
-            pag, marcas: marcasDa(pag, p), px: 1500,
+            pag, marcas: marcasDa(pag, p), px: 1500, giro: giroDe(pag),
             recorte: { x: p.croqui.x, y: p.croqui.y, largura: 0.42, proporcao: PROPORCAO_RECORTE },
           })),
         });
@@ -936,9 +998,17 @@
     if (!window.jspdf?.jsPDF) throw new Error("A biblioteca do PDF não carregou. Abra o app com internet uma vez.");
     const { jsPDF } = window.jspdf;
     let pdf = null;
-    for (const [i, fl] of folhas.entries()) {
+    for (let [i, fl] of folhas.entries()) {
       aoAndar(i, folhas.length);
-      const { cv, w, h } = await imagem(proj, { pag: fl.pag, marcas: fl.marcas || [], px: CELULAR ? 2400 : 3000, canvas: true });
+      // folha girada como na tela: as posições guardadas (folha original) vão para a girada
+      const g = giroValido(fl.giro), gi = (x, y) => paraGirada(x, y, g);
+      const { cv, w, h } = await imagem(proj, { pag: fl.pag, marcas: fl.marcas || [], px: CELULAR ? 2400 : 3000, canvas: true, giro: g });
+      fl = {
+        ...fl,
+        tracos: (fl.tracos || []).map((t) => t.map(([x, y]) => gi(x, y))),
+        vaos: (fl.vaos || []).map((v) => { const [x, y] = gi(v.x, v.y); return { ...v, x, y, linha: v.linha && v.linha.map(([a, b]) => gi(a, b)) }; }),
+        notas: (fl.notas || []).map((n) => { const [x, y] = gi(n.x, n.y); return { ...n, x, y }; }),
+      };
       const ctx = cv.getContext("2d");
       const r = Math.max(6, Math.round(Math.max(w, h) / 130));
       // rascunho do campo (alteração da rede)
