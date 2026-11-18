@@ -250,6 +250,43 @@
       /* sem espaço: segue sem guardar */
     }
   }
+  // Foco do zoom pronto antes: a folha com o dobro da nitidez da imagem base, em pedaços de
+  // 768 px (JPEG no aparelho, das 3 folhas mais recentes). O pdf.js leva o mesmo tempo para
+  // desenhar um pedaço pequeno ou a folha toda (no celular, 1,5 a 3 s): com os pedaços prontos,
+  // o zoom fica nítido em instantes. Além do dobro, desenha do PDF como antes.
+  const LADO_LADRILHO = 768;
+  const FOLHAS_COM_LADRILHOS = 3;
+  const bitmapsLadrilho = new Map(); // chave -> ImageBitmap (os últimos usados)
+  async function bitmapLadrilho(k) {
+    if (bitmapsLadrilho.has(k)) {
+      const b = bitmapsLadrilho.get(k);
+      bitmapsLadrilho.delete(k);
+      bitmapsLadrilho.set(k, b);
+      return b;
+    }
+    const blob = await imagemGuardada(k);
+    if (!blob || !window.createImageBitmap) return null;
+    const b = await createImageBitmap(blob);
+    bitmapsLadrilho.set(k, b);
+    while (bitmapsLadrilho.size > (CELULAR ? 10 : 24)) {
+      const [velho, bv] = bitmapsLadrilho.entries().next().value;
+      bitmapsLadrilho.delete(velho);
+      bv.close?.();
+    }
+    return b;
+  }
+  async function marcarFolhaComLadrilhos(prefixo, n) {
+    try {
+      const lista = (await Banco.ler("croqui_ladrilhos", [])).filter((x) => x.p !== prefixo);
+      lista.push({ p: prefixo, n });
+      while (lista.length > FOLHAS_COM_LADRILHOS) {
+        const velha = lista.shift();
+        for (let i = 0; i < velha.n; i++) await Banco.gravar(`${velha.p}|${i}`, null);
+      }
+      await Banco.gravar("croqui_ladrilhos", lista);
+    } catch (e) { /* sem espaço */ }
+  }
+
   // a tela desenhando o projeto: a leitura dos (P) espera (as duas juntas disputavam o celular)
   let desenhandoTela = 0;
   // e enquanto o supervisor mexe (arrasta, dá zoom, digita): o OCR é pesado e travava a tela
@@ -383,6 +420,79 @@
         this._sNomes = null;
         this._posicionarMarcas();
       }, 30);
+      // a folha com o dobro da nitidez, em pedaços, por trás (para o zoom focar na hora)
+      this._lad = { sL: this.sb * 2, prefixo: `croqui-lad|${chave}|${pag}|${giro}|${Math.round(this.sb * 2000)}`, prontos: new Set(), pedido };
+      setTimeout(() => this._prepararLadrilhos(this._lad).catch(() => {}), 1500);
+    }
+
+    /** desenha (uma vez por folha) e guarda os pedaços com o dobro da nitidez */
+    async _prepararLadrilhos(lad) {
+      const f = this.f;
+      const L = Math.ceil((f.W * lad.sL) / LADO_LADRILHO), A = Math.ceil((f.H * lad.sL) / LADO_LADRILHO);
+      lad.cols = L;
+      lad.lins = A;
+      const novos = [];
+      for (let j = 0; j < A; j++) {
+        for (let i = 0; i < L; i++) {
+          if (lad.pedido !== this._pedido) return; // trocou de folha ou girou
+          for (let tentativa = 0; tentativa < 20; tentativa++) {
+          const k = `${lad.prefixo}|${j * L + i}`;
+          if (await imagemGuardada(k)) { lad.prontos.add(j * L + i); continue; }
+          await esperarTela(); // não disputa com o dedo nem com a tela desenhando
+          if (lad.pedido !== this._pedido) return;
+          const cv = document.createElement("canvas");
+          cv.width = Math.min(LADO_LADRILHO, Math.ceil(f.W * lad.sL) - i * LADO_LADRILHO);
+          cv.height = Math.min(LADO_LADRILHO, Math.ceil(f.H * lad.sL) - j * LADO_LADRILHO);
+          const tarefa = f.desenhar(cv.getContext("2d"), lad.sL, i * LADO_LADRILHO, j * LADO_LADRILHO);
+          this._tarefaLad = tarefa;
+          try {
+            await tarefa.promise;
+          } catch (e) {
+            cv.width = cv.height = 0;
+            continue; // o dedo mexeu: este pedaço é desenhado de novo depois
+          } finally {
+            if (this._tarefaLad === tarefa) this._tarefaLad = null;
+          }
+          const blob = await new Promise((ok) => cv.toBlob(ok, "image/jpeg", 0.88));
+          cv.width = cv.height = 0;
+          if (!blob) return;
+          await Banco.gravar(k, blob);
+          lad.prontos.add(j * L + i);
+          novos.push(k);
+          break;
+          }
+        }
+      }
+      if (novos.length || !lad.marcada) {
+        lad.marcada = true;
+        await marcarFolhaComLadrilhos(lad.prefixo, L * A);
+      }
+    }
+
+    /** o pedaço da tela montado com os ladrilhos prontos; false se falta algum */
+    async _detalheDosLadrilhos(cv, vista, dpr) {
+      const lad = this._lad;
+      if (!lad?.cols || lad.pedido !== this._pedido) return false;
+      const k = (vista.s * dpr) / lad.sL; // ladrilho -> tela
+      if (k > 1.08) return false; // mais perto que o dobro: só o PDF dá nitidez
+      const T = LADO_LADRILHO;
+      // a parte da folha (em px dos ladrilhos) que aparece na tela
+      const x0 = (-vista.tx / vista.s) * lad.sL, y0 = (-vista.ty / vista.s) * lad.sL;
+      const x1 = x0 + (this.cw / vista.s) * lad.sL, y1 = y0 + (this.ch / vista.s) * lad.sL;
+      const i0 = Math.max(0, Math.floor(x0 / T)), i1 = Math.min(lad.cols - 1, Math.floor(x1 / T));
+      const j0 = Math.max(0, Math.floor(y0 / T)), j1 = Math.min(lad.lins - 1, Math.floor(y1 / T));
+      const precisa = [];
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) precisa.push([i, j]);
+      if (!precisa.length || precisa.some(([i, j]) => !lad.prontos.has(j * lad.cols + i))) return false;
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      for (const [i, j] of precisa) {
+        const b = await bitmapLadrilho(`${lad.prefixo}|${j * lad.cols + i}`);
+        if (!b) return false;
+        ctx.drawImage(b, (i * T * k) + vista.tx * dpr, (j * T * k) + vista.ty * dpr, b.width * k, b.height * k);
+      }
+      return true;
     }
 
     /** escala com a folha inteira na tela */
@@ -578,8 +688,9 @@
         this.detalhe.style.transform = `translate(${this.tx - this.det.tx * kd}px, ${this.ty - this.det.ty * kd}px) scale(${kd})`;
       }
       this._posicionarMarcas();
+      this._tarefaLad?.cancelar(); // preparar os pedaços não pode atrasar o dedo
       clearTimeout(this._tempoDet);
-      this._tempoDet = setTimeout(() => this._desenharDetalhe(), 220);
+      this._tempoDet = setTimeout(() => this._desenharDetalhe(), 120);
     }
 
     _posicionarMarcas() {
@@ -617,14 +728,21 @@
       const cv = document.createElement("canvas");
       cv.width = Math.round(this.cw * dpr);
       cv.height = Math.round(this.ch * dpr);
-      const tarefa = this.f.desenhar(cv.getContext("2d"), vista.s * dpr, -vista.tx * dpr, -vista.ty * dpr);
-      this._tarefaDet = tarefa;
-      try {
-        await tarefa.promise;
-      } catch (e) {
-        return; // cancelado: veio outro gesto
+      const marca = (this._marcaDet = {});
+      let tarefa = null;
+      if (await this._detalheDosLadrilhos(cv, vista, dpr)) {
+        if (this._marcaDet !== marca) return; // veio outro gesto no meio
+      } else {
+        if (this._marcaDet !== marca) return;
+        tarefa = this.f.desenhar(cv.getContext("2d"), vista.s * dpr, -vista.tx * dpr, -vista.ty * dpr);
+        this._tarefaDet = tarefa;
+        try {
+          await tarefa.promise;
+        } catch (e) {
+          return; // cancelado: veio outro gesto
+        }
+        if (this._tarefaDet !== tarefa || this._marcaDet !== marca) return;
       }
-      if (this._tarefaDet !== tarefa) return;
       const d = this.detalhe;
       d.width = cv.width;
       d.height = cv.height;
