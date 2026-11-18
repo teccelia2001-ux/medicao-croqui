@@ -1115,3 +1115,31 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .nota-rapidas { display: flex; flex-wrap: wrap; gap: 6px; }
 .nota-rapida { cursor: pointer; font-weight: 700; color: #1d4ed8; background: #eff6ff; border: 1.5px solid #bfdbfe; }
 .cq-so-fotos .botao { min-height: 42px; }
+
+/* teclado numérico do app (tablet deitado): só as teclas, por cima do croqui, sem cobrir o painel */
+.teclado-app {
+  position: fixed;
+  left: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(3, 64px);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.92);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.35);
+  touch-action: manipulation;
+}
+.teclado-app[hidden] { display: none; }
+.teclado-app button {
+  height: 52px;
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f172a;
+  font: 700 22px/1 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+.teclado-app button:active { background: #e2e8f0; }
+.teclado-app .teclado-ok { grid-column: 1 / -1; background: var(--vermelho); color: #fff; font-size: 18px; }

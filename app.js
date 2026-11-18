@@ -68,6 +68,52 @@
   // tablet e computador: o lançamento do ponto abre ao lado, com o croqui à vista (18/11/2026)
   const TELA_LARGA = matchMedia("(min-width: 760px)");
   const painelLateral = () => TELA_LARGA.matches;
+  // tablet deitado: o teclado do Android ocupa a largura toda e cobria o painel de lançamento.
+  // Nos campos de número entra o teclado do app (só as teclas), por cima do croqui à esquerda
+  const tecladoDoApp = () => painelLateral() && matchMedia("(pointer: coarse)").matches;
+  const $teclado = document.createElement("div");
+  $teclado.className = "teclado-app";
+  $teclado.hidden = true;
+  $teclado.setAttribute("role", "group");
+  $teclado.setAttribute("aria-label", "Teclado numérico");
+  $teclado.innerHTML = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ",", "0", "⌫"]
+    .map((k) => `<button type="button" data-k="${k === "⌫" ? "apaga" : k}"${k === "⌫" ? ' aria-label="Apagar"' : ""}>${k}</button>`).join("")
+    + `<button type="button" class="teclado-ok" data-k="ok">OK</button>`;
+  document.body.appendChild($teclado);
+  let campoNum = null, primeiraTecla = false;
+  function fecharTeclado(tirarFoco) {
+    const c = campoNum;
+    campoNum = null;
+    $teclado.hidden = true;
+    if (c) {
+      c.dispatchEvent(new Event("change", { bubbles: true })); // o valor mudou pelo teclado do app
+      if (tirarFoco) c.blur();
+    }
+  }
+  $teclado.addEventListener("pointerdown", (e) => e.preventDefault()); // não tira o foco do campo
+  $teclado.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b || !campoNum || !document.body.contains(campoNum)) return fecharTeclado(false);
+    const k = b.dataset.k;
+    if (k === "ok") return fecharTeclado(true);
+    // a 1ª tecla troca o que estava (como escolher tudo e digitar); depois vai somando
+    if (k === "apaga") campoNum.value = primeiraTecla ? "" : campoNum.value.slice(0, -1);
+    else if (k === "," && (primeiraTecla ? false : /[,.]/.test(campoNum.value))) return;
+    else campoNum.value = (primeiraTecla ? "" : campoNum.value) + (k === "," && primeiraTecla ? "0," : k);
+    primeiraTecla = false;
+    campoNum.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  document.addEventListener("focusin", (e) => {
+    if (!tecladoDoApp() || !e.target.matches?.("input[data-num]")) return;
+    campoNum = e.target;
+    primeiraTecla = true;
+    $teclado.hidden = false;
+  });
+  document.addEventListener("focusout", (e) => {
+    if (e.target !== campoNum) return;
+    setTimeout(() => { if (campoNum && document.activeElement !== campoNum) fecharTeclado(false); }, 120);
+  });
+
   /** a tela do ponto está à vista (sozinha, ou no painel ao lado do croqui) */
   const vendoPonto = () => estado.tela === "ponto" || (estado.tela === "croqui" && !!estado.cqPainel);
   /** abre o ponto: no croqui de tablet/computador, no painel ao lado; senão, na tela dele */
@@ -353,6 +399,7 @@
     desenhada = { tela: estado.tela, ponto: estado.pontoId };
     document.body.classList.toggle("com-croqui", estado.tela === "croqui");
     if (estado.tela === "croqui") { montarCroqui(); acimaDaBarra(); }
+    if (tecladoDoApp()) document.querySelectorAll("input[data-num]").forEach((i) => i.setAttribute("inputmode", "none"));
     if (vendoPonto()) {
       const p = ponto();
       if (p) carregarMiniaturas(p.fotos);
@@ -1672,7 +1719,7 @@
 
   function campoQtd(valor, attrs, grande = false) {
     return `<div class="setas${grande ? " setas-grande" : ""}">
-      <input inputmode="decimal" value="${esc(valor)}" placeholder="0" autocomplete="off" ${attrs}>
+      <input inputmode="decimal" data-num value="${esc(valor)}" placeholder="0" autocomplete="off" ${attrs}>
       <div><button type="button" aria-label="Aumentar" data-passo="1">▲</button><button type="button" aria-label="Diminuir" data-passo="-1">▼</button></div>
     </div>`;
   }
@@ -2047,7 +2094,7 @@
           <datalist id="lista-postes">${opcoesPostes(o)}</datalist>
         </div>
         <small class="sub">Escolha o poste ou digite outro (ex.: P27A): poste que não existe é criado como extra.</small>
-        <label class="campo">Metragem (m)<input id="p-metros" inputmode="decimal" value="${esc(p.vao.metros || "")}" placeholder="Ex.: 35" autocomplete="off"></label>
+        <label class="campo">Metragem (m)<input id="p-metros" inputmode="decimal" data-num value="${esc(p.vao.metros || "")}" placeholder="Ex.: 35" autocomplete="off"></label>
         ${o.projeto ? `<button type="button" class="link link-remarcar" data-acao="vao-remarcar">📌 Remarcar a linha no croqui</button>` : ""}` : `<label class="campo">Ponto
           <input id="p-nome" value="${esc(p.nome)}" placeholder="P1" autocapitalize="characters" autocomplete="off">
         </label>`}
