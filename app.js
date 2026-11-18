@@ -887,43 +887,106 @@
   // ---------- análise geral do projeto
   // Ao anexar o projeto: acha todos os "(P)" verdes, cria os pontos já marcados no croqui e
   // lê as sugestões de cada um. Na hora de medir é só abrir o ponto e lançar.
-  async function analisarProjeto(obra) {
+  /** Análise em andamento, guardada no aparelho: { [obraId]: { pag, grupo, parciais, pags } }.
+   *  Se a tela recarrega ou o celular fecha o app, ela continua de onde parou ao abrir de novo. */
+  const lerAnalises = () => Banco.ler("analises", {});
+  async function guardarAnalise(id, dados) {
+    const todas = await lerAnalises();
+    if (dados) todas[id] = dados; else delete todas[id];
+    await Banco.gravar("analises", todas);
+  }
+  /** os pontos achados numa folha entram na obra (já lançado só ganha o lugar). `provisorio`:
+   *  lido agora, antes de a folha terminar (no fim dela a sequência é conferida) */
+  function juntarPontos(o, achados, provisorio = false) {
+    for (const x of achados) {
+      const croqui = { pag: x.pag, x: arred(x.x), y: arred(x.y) };
+      const comNome = (n) => M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === n);
+      let nome = x.nome, ja = comNome(nome);
+      // outro croqui da obra pode recomeçar do P1: o da outra folha vira "P1-F2"
+      if (ja?.croqui && (ja.croqui.pag || 1) !== x.pag) { nome = `${x.nome}-F${x.pag}`; ja = comNome(nome); }
+      if (ja) { if (!ja.croqui) ja.croqui = croqui; continue; }
+      // sem data: a data de execução entra quando o 1º serviço for lançado
+      o.pontos.push({ id: novoId(), nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true, ...(provisorio ? { provisorio: true } : {}) });
+    }
+  }
+  /** Fim da folha: os provisórios viram definitivos com o nome e o lugar conferidos. O que a
+   *  conferência tirou ou renomeou ("P17" -> P117, símbolo verde) sai, se nada foi lançado nele. */
+  function conferirFolha(o, pag, finais) {
+    const base = (n) => n.trim().toUpperCase().replace(/-F\d+$/, "");
+    const porNome = new Map(finais.map((x) => [x.nome, x]));
+    const intocado = (p) => !p.itens.length && !p.fotos.length && !(p.obs || "").trim();
+    o.pontos = o.pontos.filter((p) => !(p.provisorio && (p.croqui?.pag || 1) === pag && intocado(p) && !porNome.has(base(p.nome))));
+    for (const p of o.pontos) {
+      if (!p.provisorio || (p.croqui?.pag || 1) !== pag) continue;
+      const f = porNome.get(base(p.nome));
+      if (f) p.croqui = { pag, x: arred(f.x), y: arred(f.y) };
+      delete p.provisorio;
+    }
+    juntarPontos(o, finais);
+  }
+  /** retoma a análise que parou (tela recarregada, app fechado): a primeira da fila */
+  async function retomarAnalise() {
+    if (estado.analise?.fase === "pontos" || estado.analise?.fase === "servicos") return;
+    const todas = await lerAnalises();
+    for (const [id, dados] of Object.entries(todas)) {
+      const obra = await Banco.obterObra(id);
+      if (!obra?.projeto || soLeitura(obra) || (await obrasExcluidas()).has(id)) { await guardarAnalise(id, null); continue; }
+      return analisarProjeto(obra, dados);
+    }
+  }
+
+  async function analisarProjeto(obra, retomar = null) {
     if (!obra?.projeto || soLeitura(obra) || estado.analise?.fase === "pontos" || estado.analise?.fase === "servicos") return;
-    const a = (estado.analise = { obraId: obra.id, numero: obra.numero, fase: "pontos", feitos: 0, total: 0, achados: 0, pag: 1, pags: 1 });
+    const a = (estado.analise = { obraId: obra.id, numero: obra.numero, fase: "pontos", feitos: 0, total: 0, achados: 0, pag: retomar?.pag || 1, pags: retomar?.pags || 1 });
     mostrarAnalise();
+    // a obra pode ter sido recarregada no meio: trabalha na que está valendo
+    const valendo = async () => (estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra);
+    const gravarObra = async (o) => {
+      if (estado.obra === o) {
+        await salvarAgora();
+        if (estado.tela === "croqui") {
+          atualizarMarcas();
+          // só o número de pontos do título (refazer a tela tiraria o zoom de lugar)
+          const sub = document.querySelector(".cq-titulo small");
+          if (sub) sub.textContent = `${plural(postes(o).filter((p) => p.croqui).length, "ponto", "pontos")} no croqui`;
+        }
+      } else {
+        await Banco.salvarObra({ ...o, dono: true });
+        enviarDepois();
+      }
+    };
     try {
       const proj = await garantirProjeto(obra);
       if (!proj) throw new Error("O projeto não está neste celular.");
       const pags = await Croqui.paginas(proj);
       a.pags = pags;
-      const achados = [];
       const excluida = async () => (await obrasExcluidas()).has(obra.id);
-      for (let pag = 1; pag <= pags; pag++) {
+      for (let pag = retomar?.pag || 1; pag <= pags; pag++) {
         if (await excluida()) throw new Error("A obra foi excluída.");
-        achados.push(...(await Croqui.acharPontos(proj, pag, (f, t) => { Object.assign(a, { feitos: f, total: t, pag, pags }); mostrarAnalise(); })));
+        const doMeio = retomar && retomar.pag === pag ? retomar : null; // folha que parou no meio
+        await guardarAnalise(obra.id, { pag, grupo: doMeio?.grupo || 0, parciais: doMeio?.parciais || [], pags });
+        const daFolha = await Croqui.acharPontos(proj, pag, (f, t) => { Object.assign(a, { feitos: f, total: t, pag, pags }); mostrarAnalise(); }, {
+          inicio: doMeio?.grupo || 0,
+          parciais: doMeio?.parciais || [],
+          aoGuardar: async (grupo, parciais) => {
+            await guardarAnalise(obra.id, { pag, grupo, parciais, pags });
+            // cada (P) lido já entra na obra e aparece no croqui, sem esperar a folha acabar
+            const o = await valendo();
+            const antes = o.pontos.length;
+            juntarPontos(o, parciais, true);
+            if (o.pontos.length !== antes) await gravarObra(o);
+          },
+        });
+        // excluída enquanto lia: não grava a obra de novo (ela voltaria para a lista e o banco)
+        if (await excluida()) throw new Error("A obra foi excluída.");
+        // cada folha já entra na obra ao terminar: o que foi achado não se perde
+        const o = await valendo();
+        conferirFolha(o, pag, daFolha);
+        a.achados += daFolha.length;
+        await gravarObra(o);
+        await guardarAnalise(obra.id, pag < pags ? { pag: pag + 1, grupo: 0, parciais: [], pags } : null);
       }
-      // excluída enquanto lia: não grava a obra de novo (ela voltaria para a lista e o banco)
-      if (await excluida()) throw new Error("A obra foi excluída.");
-      a.achados = achados.length;
-      // a obra pode ter sido recarregada no meio: trabalha na que está valendo
-      const o = estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra;
-      for (const x of achados) {
-        const croqui = { pag: x.pag, x: arred(x.x), y: arred(x.y) };
-        const comNome = (n) => M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === n);
-        let nome = x.nome, ja = comNome(nome);
-        // outro croqui da obra pode recomeçar do P1: o da outra folha vira "P1-F2"
-        if (ja?.croqui && (ja.croqui.pag || 1) !== x.pag) { nome = `${x.nome}-F${x.pag}`; ja = comNome(nome); }
-        if (ja) { if (!ja.croqui) ja.croqui = croqui; continue; } // já lançado: só ganha o lugar
-        // sem data: a data de execução entra quando o 1º serviço for lançado
-        o.pontos.push({ id: novoId(), nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true });
-      }
-      if (estado.obra === o) {
-        await salvarAgora();
-        if (estado.tela === "croqui") atualizarMarcas();
-      } else {
-        await Banco.salvarObra({ ...o, dono: true });
-        enviarDepois();
-      }
+      const o = await valendo();
       // as sugestões de cada ponto, uma de cada vez (ficam guardadas no aparelho)
       const comLugar = sugestaoLigada() ? M.pontosReais(o.pontos).filter((p) => p.croqui) : [];
       a.semSugestao = !sugestaoLigada();
@@ -943,10 +1006,13 @@
     } catch (e) {
       console.warn("análise do projeto:", e);
       Object.assign(a, { fase: "erro", erro: e.message });
-      if (!/excluída/.test(e.message || "")) avisar(`Não deu para definir os pontos da obra ${obra.numero}: ${e.message}`, "erro", 9000);
+      if (/excluída/.test(e.message || "")) await guardarAnalise(obra.id, null);
+      else avisar(`Não deu para definir os pontos da obra ${obra.numero}: ${e.message}`, "erro", 9000);
     }
     mostrarAnalise();
     if (estado.tela === "croqui" && estado.obra?.id === obra.id) render(); // título com o total de pontos
+    // outra obra ficou com a análise pela metade: segue com ela
+    if (a.fase === "pronto") setTimeout(retomarAnalise, 1000);
   }
   /** andamento da análise de 0 a 100 (as folhas uma depois da outra) */
   const andamentoAnalise = (a) => Math.min(99, Math.round((((a.pag || 1) - 1) + (a.total ? a.feitos / a.total : 0)) / (a.pags || 1) * 100));
@@ -955,7 +1021,7 @@
     const a = estado.analise;
     if (!a) return "";
     if (a.fase === "pontos" || a.fase === "servicos") {
-      return `<div class="faixa faixa-analise">🔎 Definindo os pontos da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%</div>`;
+      return `<div class="faixa faixa-analise"><span>🔎 Definindo os pontos da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%</span></div>`;
     }
     if (a.fase === "pronto") {
       return `<div class="faixa faixa-ok faixa-analise"><span>✓ Obra <b>${esc(a.numero)}</b>: todos os pontos definidos (${plural(a.definidos ?? a.achados, "ponto", "pontos")}${a.pags > 1 ? ` em ${a.pags} folhas` : ""}).</span>
@@ -2517,7 +2583,7 @@
     irPara(o.projeto && (nova || pn) ? "croqui" : "obra");
     if (mudouNumero) refazerFaixas(o, o.pontos);
     // projeto novo: análise geral (acha os pontos e lê as sugestões de todos)
-    if (pn) setTimeout(() => analisarProjeto(o), 300);
+    if (pn) setTimeout(async () => { await guardarAnalise(o.id, null); analisarProjeto(o); }, 300);
   }
 
   /** `nome` e `croqui` ({ pag, x, y }) quando o ponto nasce de um toque no croqui */
@@ -2877,7 +2943,7 @@
       }
       case "analisar-projeto": // análise geral de novo (obra com projeto anexado antes)
         irPara("croqui");
-        setTimeout(() => analisarProjeto(estado.obra), 300);
+        setTimeout(async () => { await guardarAnalise(estado.obra.id, null); analisarProjeto(estado.obra); }, 300);
         return;
       case "sug-ocultar": // sugestão do projeto que o supervisor não vai usar
       case "sug-mostrar": {
@@ -3381,6 +3447,7 @@
       }
     }
     await irPara("inicio");
+    setTimeout(() => retomarAnalise().catch((e) => console.warn("retomar análise:", e)), 1500);
     // guarda permanente (o navegador não apaga nada sozinho) e aviso de espaço apertado
     Banco.pedirPersistencia();
     conferirEspaco().then(() => estado.espacoApertado && estado.tela === "inicio" && render());

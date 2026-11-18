@@ -1779,7 +1779,7 @@
    *  (rápido, sem OCR), lê cada um com `lerPoste` (endireita em qualquer posição) e fica com
    *  os que são (P). `aoAndar(feitos, total)` conta o progresso.
    *  Devolve [{ nome: "P2", pag, x, y }] (x, y em fração da folha). */
-  async function acharPontos(proj, pag = 1, aoAndar = () => {}) {
+  async function acharPontos(proj, pag = 1, aoAndar = () => {}, { inicio = 0, parciais = [], aoGuardar = null } = {}) {
     const im = await imagem(proj, { pag, px: 3000, canvas: true });
     const W = im.cv.width, H = im.cv.height;
     // grade de células de 4 px com tinta verde; células vizinhas formam um texto.
@@ -1832,13 +1832,17 @@
       if (curto < ref * 0.002 || curto > ref * 0.02 || longo / curto < 1.1 || longo / curto > 8 || longo > ref * 0.05) continue;
       grupos.push({ x: ((x0 + x1 + 1) / 2) * C / W, y: ((y0 + y1 + 1) / 2) * C / H });
     }
-    const achados = [];
+    // continuando uma busca interrompida (a tela recarregou): os grupos já lidos não voltam
+    const achados = [...parciais];
     for (const [i, g] of grupos.entries()) {
+      if (i < inicio) continue;
       aoAndar(i, grupos.length);
       const r = await lerPoste(proj, { pag, x: g.x, y: g.y });
       // num círculo ou símbolo verde o OCR acaba lendo um (P) vizinho cortado na borda
       if (window.CROQUI_DEPURAR && r) (window.CROQUI_PERTO = window.CROQUI_PERTO || []).push(`${r.nome}@${g.x.toFixed(3)},${g.y.toFixed(3)} ${r.perto.toFixed(3)}`);
       if (r?.nome && r.perto <= PERTO_DO_GRUPO) achados.push({ nome: r.nome, pag, x: g.x, y: g.y, comP: r.comP });
+      // a cada grupo: guarda até onde foi (no celular a página pode ser fechada) e o (P) lido
+      if (aoGuardar) await aoGuardar(i + 1, achados);
     }
     aoAndar(grupos.length, grupos.length);
     // o mesmo nome duas vezes (o (P6) do "DETALHE A" e o da rua): fica o que está junto dos
