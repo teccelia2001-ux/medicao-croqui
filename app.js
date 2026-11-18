@@ -940,6 +940,29 @@
     o.pontos.forEach((p) => { delete p.provisorio; delete p.perto; });
     return antes - o.pontos.length;
   }
+  // tela ligada enquanto a busca roda: com a tela bloqueada o celular congela a página e a
+  // busca para (o celular libera sozinho se o app sair da frente; volta quando ele volta)
+  let travaTela = null;
+  async function manterTelaLigada(ligar) {
+    try {
+      if (ligar) {
+        if (!travaTela && navigator.wakeLock && document.visibilityState === "visible") {
+          travaTela = await navigator.wakeLock.request("screen");
+          travaTela.addEventListener("release", () => { travaTela = null; });
+        }
+      } else if (travaTela) {
+        const t = travaTela;
+        travaTela = null;
+        await t.release();
+      }
+    } catch (e) {
+      travaTela = null; // sem suporte ou bateria fraca: segue sem
+    }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && estado.analise?.fase === "pontos") manterTelaLigada(true);
+  });
+
   /** retoma a leitura que parou (tela recarregada, app fechado): a primeira da fila */
   async function retomarAnalise() {
     if (estado.analise?.fase === "pontos") return;
@@ -955,6 +978,7 @@
     if (!obra?.projeto || soLeitura(obra) || estado.analise?.fase === "pontos") return;
     const a = (estado.analise = { obraId: obra.id, numero: obra.numero, fase: "pontos", feitos: 0, total: 0, achados: 0, pag: retomar?.pag || 1, pags: retomar?.pags || 1 });
     mostrarAnalise();
+    manterTelaLigada(true);
     // a obra pode ter sido recarregada no meio: trabalha na que está valendo
     const valendo = async () => (estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra);
     try {
@@ -1001,6 +1025,7 @@
       else avisar(`Não deu para ler os (P) da obra ${obra.numero}: ${e.message}`, "erro", 9000);
     }
     mostrarAnalise();
+    manterTelaLigada(false); // a próxima obra da fila (se tiver) liga de novo
     // outra obra ficou com a leitura pela metade: segue com ela
     if (a.fase === "pronto") setTimeout(retomarAnalise, 1000);
   }
@@ -1011,7 +1036,7 @@
     const a = estado.analise;
     if (!a) return "";
     if (a.fase === "pontos" || a.fase === "servicos") {
-      return `<div class="faixa faixa-analise"><span>🔎 Lendo os (P) da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%</span></div>`;
+      return `<div class="faixa faixa-analise"><span>🔎 Lendo os (P) da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%${travaTela ? " · 🔆 tela ligada até terminar" : ""}</span></div>`;
     }
     if (a.fase === "pronto") {
       return `<div class="faixa faixa-ok faixa-analise"><span>✓ Obra <b>${esc(a.numero)}</b>: ${plural(a.lidos ?? a.achados, "(P) lido", "(P) lidos")}${a.pags > 1 ? ` em ${a.pags} folhas` : ""}. Toque no poste e o nome vem na hora.</span>
