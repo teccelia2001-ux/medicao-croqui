@@ -26,12 +26,12 @@
   const obraValida = (n) => /^(\d{8}|\d{10})$/.test(n || "");
 
   let tempoAviso = null;
-  function avisar(texto, tipo = "ok") {
+  function avisar(texto, tipo = "ok", ms = 3500) {
     $aviso.textContent = texto;
     $aviso.className = `aviso aviso-${tipo}`;
     $aviso.hidden = false;
     clearTimeout(tempoAviso);
-    tempoAviso = setTimeout(() => ($aviso.hidden = true), 3500);
+    tempoAviso = setTimeout(() => ($aviso.hidden = true), ms);
   }
 
   // ------------------------------------------------------------------ estado
@@ -558,6 +558,7 @@
         : pendentes ? `<div class="faixa faixa-guardado">${estado.enviando ? "⟳ Enviando" : "⏳ Aguardando envio de"} ${plural(pendentes, "obra", "obras")} ao banco…</div>`
           : `<div class="faixa faixa-ok">✓ Tudo salvo no banco</div>`}
       ${estado.espacoApertado ? `<div class="erro">Espaço do celular quase cheio para o app. Libere espaço no celular apagando outros arquivos ou aplicativos (as fotos do app ficam guardadas).</div>` : ""}
+      <div id="faixa-analise">${faixaAnalise()}</div>
       <button type="button" class="botao botao-grande" data-acao="nova-obra">+ Nova obra</button>
       ${instalarHtml()}
       <section class="bloco">
@@ -699,6 +700,7 @@
     }).join("");
     return `<div class="pagina pagina-form pagina-larga">
       ${topo("Obra", "inicio", soLeitura(o) ? "" : `<button type="button" class="link" data-acao="editar-obra">Editar</button>`)}
+      <div id="faixa-analise">${faixaAnalise()}</div>
       <div class="linha-topo"><span id="selo-obra">${seloHtml(o)}</span>${o.enviada_em ? `<small class="sub">no banco desde ${M.fmtHora(o.enviada_em)}</small>` : ""}</div>
       ${soLeitura(o) ? `<div class="faixa faixa-consulta">Obra de ${esc(o.supervisor_nome || "outro supervisor")}: aberta só para consulta e para gerar a medição.</div>` : ""}
       ${o.erro_envio ? `<div class="erro">O banco recusou o envio: ${esc(o.erro_envio)}</div>` : ""}
@@ -887,12 +889,13 @@
   // lê as sugestões de cada um. Na hora de medir é só abrir o ponto e lançar.
   async function analisarProjeto(obra) {
     if (!obra?.projeto || soLeitura(obra) || estado.analise?.fase === "pontos" || estado.analise?.fase === "servicos") return;
-    const a = (estado.analise = { obraId: obra.id, fase: "pontos", feitos: 0, total: 0, achados: 0 });
+    const a = (estado.analise = { obraId: obra.id, numero: obra.numero, fase: "pontos", feitos: 0, total: 0, achados: 0, pag: 1, pags: 1 });
     mostrarAnalise();
     try {
       const proj = await garantirProjeto(obra);
       if (!proj) throw new Error("O projeto não está neste celular.");
       const pags = await Croqui.paginas(proj);
+      a.pags = pags;
       const achados = [];
       const excluida = async () => (await obrasExcluidas()).has(obra.id);
       for (let pag = 1; pag <= pags; pag++) {
@@ -933,26 +936,51 @@
         mostrarAnalise();
       }
       a.fase = "pronto";
+      a.definidos = postes(o).filter((p) => p.croqui).length;
+      // avisa em qualquer tela (o projeto grande leva minutos): o aviso do croqui fica até fechar
+      avisar(`✓ Obra ${obra.numero}: todos os pontos definidos (${plural(a.definidos, "ponto", "pontos")}${pags > 1 ? ` em ${pags} folhas` : ""}).`, "ok", 9000);
+      try { navigator.vibrate?.([150, 80, 150]); } catch (e) { /* sem vibrar */ }
     } catch (e) {
       console.warn("análise do projeto:", e);
       Object.assign(a, { fase: "erro", erro: e.message });
+      if (!/excluída/.test(e.message || "")) avisar(`Não deu para definir os pontos da obra ${obra.numero}: ${e.message}`, "erro", 9000);
     }
     mostrarAnalise();
     if (estado.tela === "croqui" && estado.obra?.id === obra.id) render(); // título com o total de pontos
-    setTimeout(() => { if (estado.analise === a) { estado.analise = null; mostrarAnalise(); } }, 8000);
+  }
+  /** andamento da análise de 0 a 100 (as folhas uma depois da outra) */
+  const andamentoAnalise = (a) => Math.min(99, Math.round((((a.pag || 1) - 1) + (a.total ? a.feitos / a.total : 0)) / (a.pags || 1) * 100));
+  /** a análise nas outras telas (lista de obras e obra): andamento e o aviso de pronto */
+  function faixaAnalise() {
+    const a = estado.analise;
+    if (!a) return "";
+    if (a.fase === "pontos" || a.fase === "servicos") {
+      return `<div class="faixa faixa-analise">🔎 Definindo os pontos da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%</div>`;
+    }
+    if (a.fase === "pronto") {
+      return `<div class="faixa faixa-ok faixa-analise"><span>✓ Obra <b>${esc(a.numero)}</b>: todos os pontos definidos (${plural(a.definidos ?? a.achados, "ponto", "pontos")}${a.pags > 1 ? ` em ${a.pags} folhas` : ""}).</span>
+        <span class="faixa-botoes"><button type="button" class="link" data-acao="abrir-obra" data-id="${esc(a.obraId)}">Ver no croqui</button><button type="button" class="remover" data-acao="analise-ok" aria-label="Fechar">×</button></span></div>`;
+    }
+    return `<div class="faixa faixa-erro faixa-analise"><span>Não deu para definir os pontos da obra ${esc(a.numero)}${a.erro ? `: ${esc(a.erro)}` : ""}.</span><button type="button" class="remover" data-acao="analise-ok" aria-label="Fechar">×</button></div>`;
   }
 
   function analiseHtml(o) {
     const a = estado.analise;
     if (!a || a.obraId !== o.id) return "";
-    const t = a.fase === "pontos" ? `🔎 Procurando os pontos (P)${a.pags > 1 ? ` na folha ${a.pag} de ${a.pags}` : " no projeto"}… ${a.total ? `${a.feitos} de ${a.total}` : ""}`
-      : a.fase === "servicos" ? `🔎 Lendo os serviços de cada ponto… ${a.feitos} de ${a.total}`
-        : a.fase === "pronto" ? `✓ ${plural(a.achados, "ponto achado", "pontos achados")} no projeto${a.semSugestao ? "" : ", com as sugestões prontas"}`
-          : `Não deu para analisar o projeto${a.erro ? `: ${esc(a.erro)}` : ""}.`;
+    if (a.fase === "pronto" || a.fase === "erro") {
+      const t = a.fase === "pronto"
+        ? `✓ <b>Todos os pontos definidos</b>: ${plural(a.definidos ?? a.achados, "ponto", "pontos")}${a.pags > 1 ? ` nas ${a.pags} folhas` : ""}. Se faltar algum, toque no poste.`
+        : `Não deu para definir os pontos${a.erro ? `: ${esc(a.erro)}` : ""}.`;
+      return `<div class="cq-dica cq-analise cq-analise-fim${a.fase === "erro" ? " cq-analise-erro" : ""}" id="cq-analise"><span>${t}</span><button type="button" class="link" data-acao="analise-ok">OK</button></div>`;
+    }
+    const t = a.fase === "pontos" ? `🔎 Definindo os pontos (P)${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""}… ${andamentoAnalise(a)}%`
+      : `🔎 Lendo os serviços de cada ponto… ${a.feitos} de ${a.total}`;
     return `<div class="cq-dica cq-analise" id="cq-analise"><span>${t}</span></div>`;
   }
   /** troca só o aviso da análise (refazer a tela tiraria o zoom de lugar) */
   function mostrarAnalise() {
+    const faixa = document.getElementById("faixa-analise"); // lista de obras e obra
+    if (faixa) faixa.innerHTML = faixaAnalise();
     const el = document.getElementById("cq-analise");
     const o = estado.obra;
     if (estado.tela !== "croqui" || !o) return;
@@ -2921,6 +2949,11 @@
         return avisar("Nada para desfazer nesta folha.", "guardado");
       }
       case "cq-baixar": return baixarCroqui();
+      case "analise-ok": // fecha o aviso de pontos definidos
+        estado.analise = null;
+        document.getElementById("cq-analise")?.remove();
+        mostrarAnalise();
+        return;
       case "cq-girar": { // 90° no sentido do relógio, só esta folha (fica guardado na obra)
         if (!o?.projeto) return;
         const pag = estado.cqPag, g = (giroDa(o, pag) + 90) % 360;

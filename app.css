@@ -1057,3 +1057,14 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .vao-servico small { color: var(--suave); font-weight: 600; }
 .cq-folha-nota textarea { width: 100%; }
 .cq-vao-solta { stroke-dasharray: 3 6; opacity: 0.6; }
+
+/* análise do projeto: andamento em qualquer tela e o aviso de pontos definidos */
+.faixa-analise { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; background: #eff6ff; color: #1e3a8a; }
+.faixa-analise.faixa-ok { background: #dcfce7; color: #14532d; }
+.faixa-analise.faixa-erro { background: #fef2f2; color: #991b1b; }
+.faixa-botoes { display: flex; align-items: center; gap: 6px; }
+.faixa-botoes .link { font-weight: 700; }
+.cq-analise-fim { pointer-events: auto; background: #15803d; border-color: #15803d; color: #fff; white-space: normal; }
+.cq-analise-fim .link { color: #fff; font-weight: 800; text-decoration: underline; padding: 2px 6px; }
+.cq-analise-erro { background: #b91c1c; border-color: #b91c1c; }
+.faixa-analise > span:first-child { flex: 1 1 180px; }
