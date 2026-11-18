@@ -936,6 +936,42 @@
     const r = local && local.em === (o.projeto?.em || "") ? local : o.rotulos;
     return r ? Object.values(r.pags || {}).reduce((n, l) => n + l.length, 0) : 0;
   }
+  const temRotulos = (o) => !!o?.rotulos && o.rotulos.em === (o.projeto?.em || "");
+  /** Ao abrir o app: a leitura dos (P) feita neste aparelho entra nas obras e sobe para o banco,
+   *  de todas de uma vez (antes só subia ao abrir o croqui de cada obra). */
+  async function subirLeiturasLocais() {
+    const todos = await todosRotulos();
+    let n = 0;
+    for (const o of await Banco.listarObras()) {
+      if (soLeitura(o) || !o.projeto) continue;
+      const local = todos[o.id];
+      if (!local || local.em !== (o.projeto.em || "")) continue;
+      if (temRotulos(o) && JSON.stringify(o.rotulos.pags) === JSON.stringify(local.pags)) continue;
+      o.rotulos = { em: local.em, pags: JSON.parse(JSON.stringify(local.pags)) };
+      await Banco.salvarObra(o);
+      n++;
+    }
+    if (n) {
+      await recarregarLocais();
+      enviarDepois(500);
+    }
+  }
+  /** Obra aberta sem a leitura dos (P): busca a que outro aparelho mandou para o banco. Só a
+   *  leitura entra (o que este celular tem para enviar não muda). */
+  async function rotulosDoBanco(o) {
+    if (!navigator.onLine || !Nuvem.lerSessao()) return false;
+    try {
+      const r = await Nuvem.baixarObra(o.id);
+      const rot = r?.projeto?.rotulos;
+      if (!rot || rot.em !== (o.projeto?.em || "")) return false;
+      o.rotulos = rot;
+      await Banco.salvarObra(o, { envio: true });
+      return true;
+    } catch (e) {
+      console.warn("leitura dos (P) do banco:", e);
+      return false;
+    }
+  }
   /** a leitura da folha vai para a obra e sobe com ela para o banco (serve em qualquer aparelho) */
   async function rotulosNaObra(o) {
     const local = (await todosRotulos())[o.id];
@@ -1339,7 +1375,13 @@
       }
       atualizarMarcas();
       // leitura dos (P) feita antes da versão 49 (só neste aparelho): passa a ir junto com a obra
-      if (!soLeitura(o) && !o.rotulos && (await rotulosNaObra(o))) salvarAgora();
+      if (!soLeitura(o) && !temRotulos(o) && (await rotulosNaObra(o))) salvarAgora();
+      // leitura feita em outro aparelho (o computador, outro celular): vem do banco
+      else if (!soLeitura(o) && !temRotulos(o)) {
+        rotulosDoBanco(o).then(async (ok) => {
+          if (ok && estado.obra?.id === o.id) avisar(`Leitura dos (P) recebida do banco: ${plural(await contarRotulos(o), "(P)", "(P)")} prontos para o toque.`, "ok", 5000);
+        });
+      }
       // deixa os leitores e a inclinação da folha prontos para o primeiro toque
       if (!soLeitura(o)) setTimeout(() => Croqui.prepararProjeto(proj, estado.cqPag).catch(() => {}), 1500);
       const centrar = pontoPorId(estado.cqCentrar);
@@ -3532,6 +3574,7 @@
       }
     }
     await irPara("inicio");
+    setTimeout(() => subirLeiturasLocais().catch((e) => console.warn("subir leituras:", e)), 1000);
     setTimeout(() => retomarAnalise().catch((e) => console.warn("retomar análise:", e)), 1500);
     // guarda permanente (o navegador não apaga nada sozinho) e aviso de espaço apertado
     Banco.pedirPersistencia();
