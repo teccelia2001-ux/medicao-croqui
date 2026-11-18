@@ -287,7 +287,7 @@
     const remota = estado.remotas?.find((x) => x.id === id);
     const obra = {
       id: r.id, numero: r.numero, local: r.local || "", municipio: r.municipio || "", departamento: r.departamento,
-      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null,
+      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null,
       criada_em: r.criada_em, atualizada_em: r.atualizada_em, pendente: false, enviada_em: r.recebida_em,
       dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null,
     };
@@ -914,9 +914,14 @@
   }
   /** o (P) já lido mais perto do toque, ou null (até 8% da largura da folha) */
   async function rotuloPerto(o, pos) {
-    const r = (await todosRotulos())[o.id];
-    if (!r || r.em !== (o.projeto?.em || "")) return null;
-    const lista = r.pags[pos.pag] || [];
+    const em = o.projeto?.em || "";
+    const local = (await todosRotulos())[o.id];
+    // a leitura deste aparelho vale primeiro (tem a folha que está sendo lida agora); senão,
+    // a que veio com a obra do banco (lida em outro celular ou no computador)
+    const daqui = local && local.em === em ? local.pags[pos.pag] : null;
+    const daObra = o.rotulos && o.rotulos.em === em ? o.rotulos.pags?.[pos.pag] : null;
+    const lista = daqui || daObra || [];
+    if (!lista.length) return null;
     const k = visor?.W ? (visor.giro % 180 ? visor.W / visor.H : visor.H / visor.W) : 1.3; // altura/largura da folha
     let melhor = null;
     for (const x of lista) {
@@ -927,8 +932,16 @@
   }
   /** quantos (P) já foram lidos na obra */
   async function contarRotulos(o) {
-    const r = (await todosRotulos())[o.id];
-    return r ? Object.values(r.pags).reduce((n, l) => n + l.length, 0) : 0;
+    const local = (await todosRotulos())[o.id];
+    const r = local && local.em === (o.projeto?.em || "") ? local : o.rotulos;
+    return r ? Object.values(r.pags || {}).reduce((n, l) => n + l.length, 0) : 0;
+  }
+  /** a leitura da folha vai para a obra e sobe com ela para o banco (serve em qualquer aparelho) */
+  async function rotulosNaObra(o) {
+    const local = (await todosRotulos())[o.id];
+    if (!local || local.em !== (o.projeto?.em || "")) return false;
+    o.rotulos = { em: local.em, pags: JSON.parse(JSON.stringify(local.pags)) };
+    return true;
   }
   /** Pontos vazios que a análise antiga (até a versão 45) criava sozinha: saem da obra. O que
    *  tem serviço, foto ou observação fica. */
@@ -1045,6 +1058,14 @@
         if (await excluida()) throw new Error("A obra foi excluída.");
         // fim da folha: a lista conferida (P17 -> P117, símbolo verde fora) substitui a parcial
         await guardarRotulos(obra, pag, daFolha);
+        // e vai junto com a obra para o banco: o computador e os outros celulares já recebem lida
+        {
+          const o = await valendo();
+          if (await rotulosNaObra(o)) {
+            if (estado.obra === o) await salvarAgora();
+            else { await Banco.salvarObra({ ...o, dono: true }); enviarDepois(); }
+          }
+        }
         a.achados += daFolha.length;
         await guardarAnalise(obra.id, pag < pags ? { pag: pag + 1, grupo: 0, parciais: [], pags, fila: retomar?.fila || 1 } : null);
       }
@@ -1317,6 +1338,8 @@
         if (v.paginas > 1) return render(); // aparece a troca de folha
       }
       atualizarMarcas();
+      // leitura dos (P) feita antes da versão 49 (só neste aparelho): passa a ir junto com a obra
+      if (!soLeitura(o) && !o.rotulos && (await rotulosNaObra(o))) salvarAgora();
       // deixa os leitores e a inclinação da folha prontos para o primeiro toque
       if (!soLeitura(o)) setTimeout(() => Croqui.prepararProjeto(proj, estado.cqPag).catch(() => {}), 1500);
       const centrar = pontoPorId(estado.cqCentrar);
@@ -2636,6 +2659,7 @@
       const giros = pn.modo === "adicionar" && o.projeto?.giros ? { giros: o.projeto.giros } : {};
       o.projeto = { nome: pn.nome, tipo: pn.tipo, tamanho: pn.blob.size, em, ...(pn.paginas ? { paginas: pn.paginas } : {}), ...giros };
       if (pn.modo !== "adicionar") o.anotacoes = null; // projeto trocado: as anotações eram do antigo
+      o.rotulos = null; // arquivo novo (até com folhas acrescentadas): os (P) são lidos de novo
       estado.projetoNovo = null;
       estado.cqPag = 1;
     }

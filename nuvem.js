@@ -208,8 +208,8 @@
       corpo: {
         id: obra.id, numero: obra.numero, local: obra.local || null, municipio: obra.municipio || null,
         departamento: obra.departamento, equipe: obra.equipe || null, obs: obra.obs || null,
-        // anotações e rascunho do croqui vão junto do projeto (a tabela não tem coluna própria)
-        pontos: obra.pontos, fotos: infos, projeto: obra.projeto ? { ...obra.projeto, anotacoes: obra.anotacoes || null } : null,
+        // anotações, rascunho e os (P) lidos vão junto do projeto (a tabela não tem coluna própria)
+        pontos: obra.pontos, fotos: infos, projeto: obra.projeto ? { ...obra.projeto, anotacoes: obra.anotacoes || null, rotulos: obra.rotulos || null } : null,
         total: totais.valor, total_us: totais.us,
         qtd_pontos: obra.pontos.filter((p) => !p.geral && !p.vao).length, criada_em: obra.criada_em, atualizada_em: obra.atualizada_em,
       },
