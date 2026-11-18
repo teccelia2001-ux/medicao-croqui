@@ -156,7 +156,7 @@
     await salvarAgora();
     // outro ponto (ou outra tela): a pesquisa dos serviços lançados começa limpa
     if (tela !== "ponto" || extra.pontoId !== estado.pontoId) estado.filtroItens = "";
-    if (tela !== "croqui") { estado.cqNovo = null; estado.cqNota = null; estado.cqDesenho = false; estado.cqAjuste = null; estado.cqPainel = null; if (!("cqMover" in extra)) estado.cqMover = null; }
+    if (tela !== "croqui") { estado.cqNovo = null; estado.cqNota = null; estado.cqDesenho = false; estado.cqAjuste = null; estado.cqPainel = null; estado.cqVaoNovo = null; if (!("cqMover" in extra)) estado.cqMover = null; }
     Object.assign(estado, { tela, busca: "", escolhido: null, qtd: "", arquivo: null }, extra);
     if (tela !== "obra-form") estado.projetoNovo = null;
     if (tela === "inicio") {
@@ -362,7 +362,7 @@
     const o = estado.obra;
     if (!o || vaiSalvar || o.pendente) return false;
     if (document.activeElement?.matches?.("input, textarea, select")) return false;
-    return !(estado.escolhido || estado.cqNovo || estado.cqNota || estado.cqAjuste || estado.cqDesenho || estado.cqMover || estado.gerando);
+    return !(estado.escolhido || estado.cqNovo || estado.cqNota || estado.cqAjuste || estado.cqVaoNovo || estado.cqDesenho || estado.cqMover || estado.gerando);
   }
 
   async function trazerObra(id) {
@@ -907,6 +907,73 @@
       console.warn("linha do vão:", e);
     }
   }
+  /** o poste (ponto) desta folha mais perto de `q`, até 5% da largura da folha */
+  function postePerto(o, q) {
+    const k = visor?.W ? (visor.giro % 180 ? visor.W / visor.H : visor.H / visor.W) : 1.3;
+    let melhor = null;
+    for (const p of postes(o)) {
+      if (!p.croqui || (p.croqui.pag || 1) !== q.pag) continue;
+      const d = Math.hypot(p.croqui.x - q.x, (p.croqui.y - q.y) * k);
+      if (d < 0.05 && (!melhor || d < melhor.d)) melhor = { p, d };
+    }
+    return melhor?.p || null;
+  }
+  /** Poste tocado que ainda não é ponto: nasce com o nome do (P) lido mais perto (até 20% da
+   *  folha), no lugar do rótulo; sem leitura, com o próximo nome, no lugar do toque. */
+  async function posteNovoAqui(o, pos) {
+    const em = o.projeto?.em || "";
+    const local = (await todosRotulos())[o.id];
+    const lista = (local && local.em === em ? local.pags[pos.pag] : null) || (o.rotulos?.em === em ? o.rotulos.pags?.[pos.pag] : null) || [];
+    const k = visor?.W ? (visor.giro % 180 ? visor.W / visor.H : visor.H / visor.W) : 1.3;
+    let rot = null;
+    for (const x of lista) {
+      const d = Math.hypot(x.x - pos.x, (x.y - pos.y) * k);
+      // o rótulo pode ficar longe do poste (0032602499: depois da caixa de texto, ~16% da folha)
+      if (d < 0.2 && (!rot || d < rot.d)) rot = { ...x, d };
+    }
+    const nome = rot?.nome || proximoNome(o);
+    const ja = postes(o).find((p) => p.nome.trim().toUpperCase() === nome && !p.croqui);
+    const croqui = rot ? { pag: pos.pag, x: arred(rot.x), y: arred(rot.y) } : { pag: pos.pag, x: arred(pos.x), y: arred(pos.y) };
+    if (ja) { ja.croqui = croqui; return ja; }
+    const p = { id: novoId(), nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [] };
+    o.pontos.push(p);
+    return p;
+  }
+  /** Modo "marcar vão": cada toque é uma ponta (gruda no quadradinho do poste). Com as duas, o vão
+   *  nasce (ou é refeito) com a linha exata entre elas e abre para a metragem. */
+  async function marcarPontaDoVao(pos, posteId = null) {
+    const vn = estado.cqVaoNovo, o = estado.obra;
+    if (!vn || vn.ocupado || !o) return;
+    vn.ocupado = true;
+    let q = pos;
+    try {
+      const proj = await garantirProjeto(o);
+      q = (proj && (await Croqui.acharPosteSimbolo(proj, pos, posteId ? 0.06 : 0.035))) || pos;
+    } catch (e) {
+      console.warn("poste perto do toque:", e);
+    }
+    const poste = (posteId && pontoPorId(posteId)) || postePerto(o, { ...q, pag: pos.pag }) || postePerto(o, pos) || (await posteNovoAqui(o, pos));
+    vn.ocupado = false;
+    if (estado.cqVaoNovo !== vn) return;
+    if (vn.pts[0]?.id === poste.id) {
+      avisar("Esse é o poste inicial. Toque no poste final do vão.", "erro");
+      return render();
+    }
+    vn.pts.push({ pag: pos.pag, x: arred(q.x), y: arred(q.y), id: poste.id });
+    if (vn.pts.length < 2) { salvarAgora(); return render(); }
+    const [a, b] = vn.pts;
+    estado.cqVaoNovo = null;
+    let v = vaoEntre(o, a.id, b.id);
+    if (!v) {
+      v = { id: novoId(), nome: `Vão ${nomeDoPoste(a.id)}–${nomeDoPoste(b.id)}`, vao: { de: a.id, para: b.id, metros: "", espacadores: "" }, dia: "", obs: "", gps: null, itens: [], fotos: [] };
+      o.pontos.push(v);
+    }
+    v.vao.linha = [[a.x, a.y], [b.x, b.y]];
+    v.croqui = { pag: a.pag, x: arred((a.x + b.x) / 2), y: arred((a.y + b.y) / 2) };
+    salvarAgora();
+    avisar(`${v.nome} marcado.`);
+    return abrirPonto(v.id);
+  }
   /** toque no modo "Ajustar linha": gruda no quadradinho do poste mais perto do toque */
   async function ajustarVao(aj, pos) {
     if (aj.ocupado) return;
@@ -1293,8 +1360,9 @@
     const mover = pontoPorId(estado.cqMover);
     const pags = o.projeto?.paginas || visor?.paginas || 1;
     const pag = Math.min(estado.cqPag, pags);
-    const aj = estado.cqAjuste, vAj = aj && pontoPorId(aj.id);
-    const dica = vAj ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste ${aj.pts.length ? `de fim (<b>${esc(nomeDoPoste(vAj.vao.para))}</b>)` : `de início (<b>${esc(nomeDoPoste(vAj.vao.de))}</b>)`}, no quadradinho preto</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
+    const aj = estado.cqAjuste, vAj = aj && pontoPorId(aj.id), vn = estado.cqVaoNovo;
+    const dica = vn ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste <b>${vn.pts.length ? `final${vn.pts[0] ? ` (de ${esc(nomeDoPoste(vn.pts[0].id))})` : ""}` : "inicial"}</b> do vão</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
+      : vAj ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste ${aj.pts.length ? `de fim (<b>${esc(nomeDoPoste(vAj.vao.para))}</b>)` : `de início (<b>${esc(nomeDoPoste(vAj.vao.de))}</b>)`}, no quadradinho preto</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : estado.cqDesenho ? `<div class="cq-dica cq-dica-rascunho"><span>✏️ Rascunho: desenhe com um dedo · dois dedos movem</span><button type="button" class="link" data-acao="cq-desfazer">↶ Desfazer</button><button type="button" class="link" data-acao="cq-rascunho">Pronto</button></div>`
       : estado.cqNovo || sel || estado.cqNota ? "" : mover ? `<div class="cq-dica cq-dica-mover"><span>📌 Toque no croqui onde fica o <b>${esc(mover.nome)}</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : !o.projeto ? ""
@@ -1323,6 +1391,7 @@
           <button type="button" data-acao="cq-zoom" data-f="0.625" aria-label="Afastar">−</button>
           <button type="button" data-acao="cq-ajustar" aria-label="Folha inteira">⤢</button>
           ${o.projeto ? `<button type="button" class="cq-girar" data-acao="cq-girar" aria-label="Girar o croqui" title="Girar o croqui">⟳</button>` : ""}
+          ${o.projeto && !soLeitura(o) ? `<button type="button" class="cq-regua${estado.cqVaoNovo ? " ativo" : ""}" data-acao="cq-vao-novo" aria-label="Marcar vão: poste inicial e final" title="Marcar vão">📏</button>` : ""}
           ${o.projeto && !soLeitura(o) ? `<button type="button" class="cq-lapis${estado.cqDesenho ? " ativo" : ""}" data-acao="cq-rascunho" aria-label="Rascunho: desenhar no croqui" aria-pressed="${!!estado.cqDesenho}" title="Rascunho">✏️</button>` : ""}
         </div>
         ${painel}
@@ -1383,7 +1452,7 @@
       </label>
       ${avisoLido(n)}
       <div class="cq-outros">
-        ${n.vao ? `<button type="button" class="botao botao-vao" data-acao="cq-vao">📏 Vão ${esc(nomeDoPoste(n.vao.de))}–${esc(nomeDoPoste(n.vao.para))}${vao ? ` <small>(${esc(medidasVao(vao) || "aberto")})</small>` : ""}</button>` : ""}
+        <button type="button" class="botao botao-vao" data-acao="cq-vao-daqui">📏 Vão a partir daqui</button>
         <button type="button" class="botao botao-claro botao-nota" data-acao="cq-anotar">📝 Anotar aqui</button>
       </div>
       ${jaExiste ? `<div class="cq-existe">${jaExiste.croqui
@@ -1453,7 +1522,8 @@
     visor.desenhar(estado.cqDesenho && !soLeitura(o) ? terminarTraco : null);
     const n = estado.cqNovo;
     const aj = estado.cqAjuste; // ajustando o vão: o 1º poste tocado fica marcado
-    visor.alfinete(n && n.pag === estado.cqPag ? n : aj?.pts.length ? { x: aj.pts[0][0], y: aj.pts[0][1] } : null);
+    const vn = estado.cqVaoNovo;
+    visor.alfinete(n && n.pag === estado.cqPag ? n : aj?.pts.length ? { x: aj.pts[0][0], y: aj.pts[0][1] } : vn?.pts.length ? vn.pts[0] : null);
   }
 
   /** põe o visor na tela do croqui, abre o projeto (baixa do banco se preciso) e marca os pontos */
@@ -1524,6 +1594,7 @@
       return render();
     }
     if (estado.cqAjuste) return ajustarVao(estado.cqAjuste, { pag: estado.cqPag, x: pos.x, y: pos.y });
+    if (estado.cqVaoNovo) return marcarPontaDoVao({ pag: estado.cqPag, x: pos.x, y: pos.y });
     // painel do ponto aberto: o toque num lugar vazio fecha ele e já abre o "Novo ponto aqui"
     if (estado.cqPainel) { estado.cqPainel = null; estado.cqSel = null; salvarAgora(); }
     // com o resumo de um ponto (ou uma anotação) aberto, o primeiro toque fora só fecha
@@ -1531,7 +1602,7 @@
     if (soLeitura(o)) return;
     const antes = estado.cqNovo;
     const n = { pag: estado.cqPag, x: arred(pos.x), y: arred(pos.y), nome: antes?.editado ? antes.nome : proximoNome(o), editado: !!antes?.editado };
-    n.vao = vaoTocado(n); // tocou na linha entre dois postes: dá para abrir o vão
+    // o vão não é mais adivinhado pelo toque na linha: o supervisor marca o poste inicial e o final
     estado.cqNovo = n;
     estado.cqRevelar = true;
     if (o.projeto) n.lendo = true;
@@ -1584,6 +1655,11 @@
     if (estado.tela !== "croqui") return;
     if (estado.cqMover) return avisar("Toque num lugar vazio do croqui.", "guardado");
     if (estado.cqAjuste) return avisar("Toque no quadradinho preto do poste, fora dos nomes.", "guardado");
+    if (estado.cqVaoNovo) { // tocou na marca de um ponto: é esse poste
+      const q = pontoPorId(id);
+      if (q && !q.vao && q.croqui) return marcarPontaDoVao({ pag: q.croqui.pag || 1, x: q.croqui.x, y: q.croqui.y }, q.id);
+      return avisar("Toque num poste.", "guardado");
+    }
     estado.cqNovo = null;
     if (String(id).startsWith("nota:")) {
       const n = (estado.obra.anotacoes?.notas || []).find((x) => `nota:${x.id}` === id);
@@ -3053,12 +3129,23 @@
         estado.cqNovo = null;
         estado.cqMover = null;
         if (estado.cqAjuste) { estado.cqSel = estado.cqAjuste.id; estado.cqAjuste = null; }
+        estado.cqVaoNovo = null;
         return render();
       case "vao-remarcar": { // da tela do vão: vai ao croqui já no ajuste da linha
         const v = ponto();
         if (!v?.vao || !o.projeto) return;
         const a = pontoPorId(v.vao.de)?.croqui;
         return irPara("croqui", { cqAjuste: { id: v.id, pts: [] }, cqSel: null, cqNovo: null, cqCentrar: v.id, cqPag: a?.pag || estado.cqPag });
+      }
+      case "cq-vao-novo": // marcar um vão: toque no poste inicial e no final
+        if (estado.cqVaoNovo) { estado.cqVaoNovo = null; return render(); }
+        Object.assign(estado, { cqVaoNovo: { pts: [] }, cqSel: null, cqNovo: null, cqNota: null, cqDesenho: false, cqAjuste: null, cqPainel: null });
+        return render();
+      case "cq-vao-daqui": { // da folha "novo ponto aqui": este toque é o poste inicial
+        const n = estado.cqNovo;
+        if (!n) return;
+        Object.assign(estado, { cqVaoNovo: { pts: [] }, cqNovo: null });
+        return marcarPontaDoVao({ pag: n.pag, x: n.x, y: n.y });
       }
       case "cq-ajustar-vao": // dois toques: no poste de início e no de fim
         estado.cqAjuste = { id: alvo.dataset.id, pts: [] };

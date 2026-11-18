@@ -1143,3 +1143,4 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 }
 .teclado-app button:active { background: #e2e8f0; }
 .teclado-app .teclado-ok { grid-column: 1 / -1; background: var(--vermelho); color: #fff; font-size: 18px; }
+.cq-regua.ativo { background: #7c3aed !important; color: #fff; }
