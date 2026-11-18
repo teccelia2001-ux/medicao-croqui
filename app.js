@@ -313,7 +313,7 @@
     }
     desenhada = { tela: estado.tela, ponto: estado.pontoId };
     document.body.classList.toggle("com-croqui", estado.tela === "croqui");
-    if (estado.tela === "croqui") montarCroqui();
+    if (estado.tela === "croqui") { montarCroqui(); acimaDaBarra(); }
     if (estado.tela === "ponto") {
       const p = ponto();
       if (p) carregarMiniaturas(p.fotos);
@@ -988,6 +988,21 @@
     if (el) el.outerHTML = html || "";
     else if (html && !estado.cqNovo && !estado.cqSel && !estado.cqMover) document.getElementById("cq-area")?.insertAdjacentHTML("afterbegin", html);
   }
+
+  /** A troca de folha fica logo acima do que cobre o pé do croqui (a barra do total ou o
+   *  resumo do ponto); no computador o resumo vai para a direita e a barra continua embaixo. */
+  function acimaDaBarra() {
+    const pg = document.querySelector(".pagina-croqui"), area = pg?.querySelector(".cq-area");
+    if (!area) return;
+    const a = area.getBoundingClientRect(), meio = a.left + a.width / 2;
+    let h = 0;
+    for (const el of pg.querySelectorAll(":scope > .cq-barra, :scope > .cq-folha")) {
+      const r = el.getBoundingClientRect();
+      if (r.left < meio && r.right > meio && r.bottom >= a.bottom - 2) h = Math.max(h, a.bottom - r.top);
+    }
+    area.style.setProperty("--baixo", `${Math.round(h)}px`);
+  }
+  window.addEventListener("resize", () => { if (estado.tela === "croqui") acimaDaBarra(); });
 
   function telaCroqui() {
     const o = estado.obra;

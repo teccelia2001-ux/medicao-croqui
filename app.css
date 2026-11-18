@@ -858,7 +858,7 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-dica-mover .link { padding: 2px 4px; color: #fff; text-decoration: underline; font-size: 14px; }
 .cq-folhas {
   left: 50%;
-  bottom: 96px;
+  bottom: calc(var(--baixo, 84px) + 12px); /* logo acima da barra do total (app.js mede) */
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -957,7 +957,6 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
     margin: 0;
     border-radius: 18px;
   }
-  .cq-folhas { bottom: 18px; }
   .cq-controles { right: auto; left: 10px; }
 }
 
