@@ -1673,11 +1673,11 @@
     ["Estruturas MT", [["62184", "CE1"], ["62186", "CE2"], ["62190", "CE3"], ["62195", "CE4"], ["62007", "LOSANGULAR"],
       ["60007", "B1/N1"], ["60067", "B2/N2"], ["60080", "B3/N3"], ["60096", "B4/N4"]]],
     ["Cruzetas", [["64197", "1N/1B"], ["64201", "2N/2B"]]],
-    ["Estruturas BT", [["60072", "SI1"], ["62205", "SI3"], ["62211", "SI4"], ["62192", "RA2"], ["64073", "RABICHO"], ["64223", "V1"]]],
+    ["Estruturas BT", [["60072", "SI1"], ["62205", "SI3"], ["62211", "SI4"], ["62192", "RA2"], ["64073", "RABICHO"], ["64223", "ARMAÇÃO V1"], ["60002", "AFASTADOR BT"]]],
     ["Transformador", [["62193", "<=40KVA"], ["62183", ">40<=112,5KVA"], ["68125", ">112,5KVA"], ["68000", "COMPONENTE"]]],
     ["Chaves e para-raios", [["62069", "CF FACA"], ["60139", "FS FUSÍVEL"], ["62033", "CARTUCHO"], ["60129", "PRBT"], ["62272", "PRMT"]]],
     ["Emendas e telecom", [["62124", "EMENDA BT"], ["62125", "EMENDA MT"], ["62080", "INTERNET"]]],
-    ["Isoladores", [["62091", "PILAR"], ["62093", "POLIMERICO"], ["60038", "BASTÃO"]]],
+    ["Isoladores", [["62093", "ISO POLIMÉRICO"], ["62091", "ISO PILAR"], ["60038", "ISO BASTÃO"]]],
     ["Conectores", [["64097", "AMPACTINHO"], ["62152", "CUNHA"], ["60044", "COMPRESSÃO"], ["60054", "PERFURANTE"], ["60040", "ESTRIBO"], ["64079", "GLV"]]],
     ["Aterramento", [["60006", "ATERR POSTE"], ["60005", "ATERR CPREDE"]]],
     ["Iluminação pública", [["60108", "IP<1,5"], ["60111", "IP>1,5"], ["60113", "RELÉ IP"]]],
@@ -1690,18 +1690,20 @@
   // 62089 e 62251, que não existem no catálogo: usados os vizinhos com o mesmo nome
   // (60172 nivelamento protegido >= 120mm, 62086 jumper, 62252 para-raio polimérico).
   const LV_ = "C&M (LV)";
+  // ordem pedida pelo supervisor em 18/11/2026: poste, estruturas MT, cruzetas, conexões, chaves
+  // e para-raios, nivelamento, equipamentos, outros (isoladores ficam antes de outros)
   const RAPIDOS_LV = [
-    ["Nivelamento de rede", [["62116", "RET PROTEGIDO <120MM", LV_], ["60172", "RET PROTEGIDO >=120MM", LV_], ["62000", "RET CABO NU <=2/0", LV_]]],
-    ["Conexões", [["60041", "ESTRIBO", LV_], ["64081", "GLV", LV_], ["68008", "COMPRESSÃO", LV_], ["68009", "CUNHA", LV_], ["62086", "JUMPER", LV_],
-      ["64105", "FLYING PROTEGIDO", LV_], ["64151", "FLYING NU", LV_], ["62154", "CONECT BYPASS", LV_], ["62155", "DESCONECT BYPASS", LV_]]],
+    ["Poste", [["62311", "POSTE", LV_]]],
     ["Estruturas MT", [["62185", "CE1", LV_], ["62187", "CE2", LV_], ["62191", "CE3", LV_], ["62196", "CE4", LV_],
       ["60061", "B1/N1", LV_], ["60070", "B2/N2", LV_], ["60082", "B3/N3", LV_], ["60098", "B4/N4", LV_], ["64074", "LOSANGULAR", LV_]]],
     ["Cruzetas", [["64199", "1N/1B", LV_], ["64203", "2N/2B", LV_]]],
+    ["Conexões", [["60041", "ESTRIBO", LV_], ["64081", "GLV", LV_], ["68008", "COMPRESSÃO", LV_], ["68009", "CUNHA", LV_], ["62086", "JUMPER", LV_],
+      ["64105", "FLYING PROTEGIDO", LV_], ["64151", "FLYING NU", LV_]]],
     ["Chaves e para-raios", [["62214", "CF FACA", LV_], ["60140", "FS FUSÍVEL", LV_], ["62031", "CARTUCHO", LV_], ["62252", "PRMT", LV_]]],
+    ["Nivelamento de rede", [["62116", "RET PROTEGIDO <120MM", LV_], ["60172", "RET PROTEGIDO >=120MM", LV_], ["62000", "RET CABO NU <=2/0", LV_]]],
     ["Equipamentos", [["64017", "TP", LV_]]],
     ["Isoladores", [["62042", "ISO POLIMÉRICO", LV_], ["62092", "ISO PILAR", LV_], ["60039", "ISO BASTÃO", LV_]]],
-    ["Poste", [["62311", "POSTE", LV_], ["60310", "CON ELEVAÇÃO", LV_]]],
-    ["Outros", [["68049", "COBERTURA", LV_]]],
+    ["Outros", [["68049", "COBERTURA", LV_], ["62154", "CONECT BYPASS", LV_], ["62155", "DESCONECT BYPASS", LV_], ["60310", "CON ELEVAÇÃO", LV_]]],
   ];
   // nome curto: só nos botões da lista (nos lançados, no PDF e na planilha vai a descrição do contrato)
   const NOME_CURTO = new Map([...RAPIDOS, ...RAPIDOS_LV].flatMap(([, itens]) => itens.map(([cod, rot, dep = DEP_RAPIDOS]) => [`${dep}|${cod}`, rot])));
