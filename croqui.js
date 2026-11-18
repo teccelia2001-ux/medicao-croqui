@@ -1168,13 +1168,14 @@
         v.n++;
         v.comP = v.comP || achou.comP;
         v.perto = Math.min(v.perto ?? 1, achou.perto ?? 1);
+        if (!v.todas?.length) v.todas = achou.todas || [];
         votos.set(achou.nome, v);
         if (v.n >= 2) break; // dois iguais: decidido
       }
       const melhor = [...votos.values()].sort((a, b) => b.n - a.n)[0];
       // comP: o "P" apareceu na leitura (sem ele pode ser um símbolo verde do desenho)
       // perto: distância do rótulo lido ao toque (fração do recorte)
-      return melhor ? { nome: melhor.nome, texto: melhor.texto, comP: !!melhor.comP, perto: melhor.perto ?? 1 } : null;
+      return melhor ? { nome: melhor.nome, texto: melhor.texto, comP: !!melhor.comP, perto: melhor.perto ?? 1, todas: melhor.todas || [] } : null;
     });
   }
 
@@ -1187,7 +1188,19 @@
   }
   async function lerPosteEm(proj, pos, px, ctx = {}) {
     const w = await prepararLeitura();
-    const im = await imagem(proj, { pag: pos.pag || 1, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.12, proporcao: 2 } });
+    const LARGURA = 0.12;
+    const im = await imagem(proj, { pag: pos.pag || 1, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura: LARGURA, proporcao: 2 } });
+    const doc = await abrir(proj);
+    const f = await folha(doc, Math.min(Math.max(1, pos.pag || 1), doc.paginas));
+    const escala = im.cv.width / (LARGURA * f.W); // px do recorte por ponto da folha
+    /** (P) lido no recorte girado `ang` -> lugar na folha; null se ficou cortado na borda */
+    const naFolha = (t, ang, rw, rh) => {
+      const th = (ang * Math.PI) / 180, qx = t.cx - rw / 2, qy = t.cy - rh / 2;
+      const ox = qx * Math.cos(th) - qy * Math.sin(th), oy = qx * Math.sin(th) + qy * Math.cos(th);
+      const m = Math.max(t.tw, t.th) / 2 + 4;
+      if (Math.abs(ox) > im.cv.width / 2 - m || Math.abs(oy) > im.cv.height / 2 - m) return null;
+      return { nome: t.nome, x: pos.x + ox / escala / f.W, y: pos.y + oy / escala / f.H };
+    };
     // projeto torto, em pé ou de cabeça para baixo: endireita e tenta cada ângulo até achar.
     // Vale de cara só a leitura com o "P" na frente do número: de cabeça para baixo o
     // "(P68)" vira "(89d)" e, sem o P, saía "P89" (o 6 vira 9 e a ordem inverte)
@@ -1198,7 +1211,8 @@
       const achou = await lerPosteGirado(w, ang ? girar(im.cv, ang) : im.cv);
       if (achou?.comP) {
         if (ctx.k) angulosQueDeram.set(ctx.k, ang);
-        return { nome: achou.nome, texto: achou.texto, comP: true, perto: achou.perto };
+        const todas = (achou.todas || []).map((t) => naFolha(t, ang, achou.w, achou.h)).filter(Boolean);
+        return { nome: achou.nome, texto: achou.texto, comP: true, perto: achou.perto, todas };
       }
       if (achou?.nome && !achou.virado && !reserva) reserva = { nome: achou.nome, texto: achou.texto, comP: false, perto: achou.perto };
       return null;
@@ -1242,6 +1256,7 @@
       await w.setParameters({ tessedit_char_whitelist: "" });
     }
     let melhor = null, virado = false;
+    const todas = []; // todos os (P) com P lidos aqui (com vários juntos, cada um no seu lugar)
     for (const b of data.blocks || []) {
       for (const par of b.paragraphs) {
         for (const linha of par.lines) {
@@ -1258,6 +1273,7 @@
             const { x0, x1, y0, y1 } = pal.bbox;
             const d = Math.hypot((x0 + x1) / 2 - im.w / 2, (y0 + y1) / 2 - im.h / 2);
             const comP = /P\d/.test(bruto);
+            if (comP) todas.push({ nome: "P" + Number(num), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, tw: x1 - x0, th: y1 - y0 });
             // o com P na frente vale mais que um sem P mais perto do toque
             if (!melhor || (comP && !melhor.comP) || (comP === melhor.comP && d < melhor.d)) {
               melhor = { nome: "P" + Number(num), texto: `(P${Number(num)})`, d, comP };
@@ -1266,7 +1282,7 @@
         }
       }
     }
-    return melhor ? { nome: melhor.nome, texto: melhor.texto, comP: melhor.comP, virado, perto: melhor.d / Math.max(im.w, im.h) } : virado ? { virado: true } : null;
+    return melhor ? { nome: melhor.nome, texto: melhor.texto, comP: melhor.comP, virado, perto: melhor.d / Math.max(im.w, im.h), todas, w: im.w, h: im.h } : virado ? { virado: true } : null;
   }
 
   // "(P2)" verde do projeto (o OCR às vezes perde um parêntese ou o P: "(P2", "2)")
@@ -1841,6 +1857,11 @@
       // num círculo ou símbolo verde o OCR acaba lendo um (P) vizinho cortado na borda
       if (window.CROQUI_DEPURAR && r) (window.CROQUI_PERTO = window.CROQUI_PERTO || []).push(`${r.nome}@${g.x.toFixed(3)},${g.y.toFixed(3)} ${r.perto.toFixed(3)}`);
       if (r?.nome && r.perto <= PERTO_DO_GRUPO) achados.push({ nome: r.nome, pag, x: g.x, y: g.y, comP: r.comP, perto: r.perto });
+      // com vários (P) juntos, um grupo verde pode cobrir mais de um rótulo (P14 a P19): os outros
+      // inteiros da mesma leitura entram também, no lugar de cada um no desenho
+      for (const t of r?.todas || []) {
+        if (t.nome !== r.nome) achados.push({ nome: t.nome, pag, x: t.x, y: t.y, comP: true, perto: 0.03 });
+      }
       // a cada grupo: guarda até onde foi (no celular a página pode ser fechada) e o (P) lido
       if (aoGuardar) await aoGuardar(i + 1, achados);
     }
