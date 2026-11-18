@@ -1346,6 +1346,8 @@
     </div>`;
   }
 
+  // anotações prontas (pedido do supervisor em 18/11/2026): um toque põe o texto
+  const NOTAS_PRONTAS = ["POSTE SUBSTITUÍDO", "POSTE APROVEITADO", "VÃO SUBSTITUÍDO", "VÃO APROVEITADO"];
   /** anotação aberta embaixo do croqui (nova ou já feita) */
   function folhaNotaCroqui() {
     const n = estado.cqNota;
@@ -1355,6 +1357,9 @@
       ${ler ? `<p class="cq-obs">${esc(n.texto)}</p>` : `<label class="campo">O que mudou aqui
         <textarea id="cq-nota-texto" rows="3" maxlength="400" placeholder="Ex.: poste ficou 5 m antes; rede passa do outro lado da rua">${esc(n.texto)}</textarea>
       </label>
+      <div class="nota-rapidas" role="group" aria-label="Anotações prontas">
+        ${NOTAS_PRONTAS.map((t) => `<button type="button" class="chip nota-rapida" data-acao="nota-rapida" data-texto="${esc(t)}">${esc(t)}</button>`).join("")}
+      </div>
       <div class="dupla">
         <button type="button" class="botao botao-claro" data-acao="cq-nota-fechar">Cancelar</button>
         <button type="button" class="botao" data-acao="cq-nota-salvar">Salvar anotação</button>
@@ -3182,6 +3187,15 @@
         estado.cqNovo = null;
         render();
         document.getElementById("cq-nota-texto")?.focus();
+        return;
+      }
+      case "nota-rapida": { // anotação pronta: entra no texto (somando, se já tem algo escrito)
+        const n = estado.cqNota;
+        const campo = document.getElementById("cq-nota-texto");
+        if (!n || !campo) return;
+        const atual = campo.value.trim();
+        campo.value = atual ? `${atual}; ${alvo.dataset.texto}` : alvo.dataset.texto;
+        n.texto = campo.value;
         return;
       }
       case "cq-nota-fechar":
