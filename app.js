@@ -1675,7 +1675,7 @@
     ["Cruzetas", [["64197", "1N/1B"], ["64201", "2N/2B"]]],
     ["Estruturas BT", [["60072", "SI1"], ["62205", "SI3"], ["62211", "SI4"], ["62192", "RA2"], ["64073", "RABICHO"], ["64223", "V1"]]],
     ["Transformador", [["62193", "<=40KVA"], ["62183", ">40<=112,5KVA"], ["68125", ">112,5KVA"], ["68000", "COMPONENTE"]]],
-    ["Chaves e para-raios", [["62069", "FACA"], ["60139", "FUSIVEL"], ["62033", "CARTUCHO"], ["60129", "PRBT"], ["62272", "PRMT"]]],
+    ["Chaves e para-raios", [["62069", "CF FACA"], ["60139", "FS FUSÍVEL"], ["62033", "CARTUCHO"], ["60129", "PRBT"], ["62272", "PRMT"]]],
     ["Emendas e telecom", [["62124", "EMENDA BT"], ["62125", "EMENDA MT"], ["62080", "INTERNET"]]],
     ["Isoladores", [["62091", "PILAR"], ["62093", "POLIMERICO"], ["60038", "BASTÃO"]]],
     ["Conectores", [["64097", "AMPACTINHO"], ["62152", "CUNHA"], ["60044", "COMPRESSÃO"], ["60054", "PERFURANTE"], ["60040", "ESTRIBO"], ["64079", "GLV"]]],
