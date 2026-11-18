@@ -252,7 +252,15 @@
   }
   // a tela desenhando o projeto: a leitura dos (P) espera (as duas juntas disputavam o celular)
   let desenhandoTela = 0;
-  const esperarTela = async () => { while (desenhandoTela > 0) await new Promise((r) => setTimeout(r, 150)); };
+  // e enquanto o supervisor mexe (arrasta, dá zoom, digita): o OCR é pesado e travava a tela
+  let ultimaMexida = 0;
+  for (const ev of ["pointerdown", "pointermove", "wheel", "keydown", "touchmove"]) {
+    // o mouse só passando por cima (computador) não conta: só com o botão ou o dedo apertado
+    document.addEventListener(ev, (e) => { if (ev !== "pointermove" || e.buttons) ultimaMexida = Date.now(); }, { passive: true, capture: true });
+  }
+  const esperarTela = async () => {
+    while (desenhandoTela > 0 || Date.now() - ultimaMexida < 1200) await new Promise((r) => setTimeout(r, 150));
+  };
 
   // ------------------------------------------------------------------ visor
   class Visor {
@@ -577,7 +585,12 @@
     _posicionarMarcas() {
       if (!this.W) return;
       this.camadaEl.setAttribute("transform", `translate(${this.tx} ${this.ty}) scale(${this.s})`);
-      this._arrumarNomes();
+      // arrumar os nomes (no branco do desenho) pesa com muitos pontos: no meio do zoom ou do
+      // arrasto fica para quando o dedo parar; fora do movimento, na hora
+      if (this._mexendo) {
+        clearTimeout(this._tempoNomes);
+        this._tempoNomes = setTimeout(() => { this._mexendo = false; this._posicionarMarcas(); }, 180);
+      } else this._arrumarNomes();
       for (const b of this.marcasEl.children) {
         const x = this.tx + Number(b.dataset.x) * this.W * this.s;
         const y = this.ty + Number(b.dataset.y) * this.H * this.s;
@@ -642,6 +655,7 @@
 
       el.addEventListener("pointerdown", (e) => {
         if (e.button > 0 || !this.W) return;
+        this._mexendo = true;
         try { el.setPointerCapture(e.pointerId); } catch (err) { /* segue */ }
         const p = { x: e.clientX, y: e.clientY };
         dedos.set(e.pointerId, p);
@@ -718,6 +732,7 @@
       el.addEventListener("wheel", (e) => {
         if (!this.W) return;
         e.preventDefault();
+        this._mexendo = true;
         const p = rel({ x: e.clientX, y: e.clientY });
         this.zoom(Math.exp(-e.deltaY * 0.0018), p.x, p.y);
       }, { passive: false });

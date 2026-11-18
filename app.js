@@ -273,9 +273,11 @@
       estado.remotasEm = Date.now();
       // obra que já estava no banco e sumiu de lá (excluída em outro aparelho): sai deste
       // também. Só a que não tem nada para enviar, e só com a lista inteira em mãos
+      // as obras do aparelho lidas uma vez só (antes, uma por uma a cada busca: pesava no celular)
+      const locais = new Map((await Banco.listarObras()).map((o) => [o.id, o]));
       if (tudo.length < 500) {
         const noBanco = new Set(tudo.map((r) => r.id));
-        for (const o of await Banco.listarObras()) {
+        for (const o of locais.values()) {
           // no banco desde antes de pedir a lista (a que acabou de subir pode ainda não constar)
           const antiga = o.enviada_em && new Date(o.enviada_em).getTime() < pedidaEm - 60000;
           if (!o.pendente && antiga && !noBanco.has(o.id) && estado.obra?.id !== o.id) await Banco.excluirObra(o.id);
@@ -285,7 +287,7 @@
       // aparelho). A obra aberta só troca se ninguém está mexendo nela agora
       let trocouAberta = null;
       for (const r of lista) {
-        const local = await Banco.obterObra(r.id);
+        const local = locais.get(r.id);
         if (local && !local.pendente && r.atualizada_em && new Date(r.atualizada_em) > new Date(local.atualizada_em)) {
           const aberta = estado.obra?.id === r.id;
           if (aberta && !podeTrocarAberta()) continue; // fica para a próxima busca
