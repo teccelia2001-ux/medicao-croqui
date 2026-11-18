@@ -1840,7 +1840,7 @@
       const r = await lerPoste(proj, { pag, x: g.x, y: g.y });
       // num círculo ou símbolo verde o OCR acaba lendo um (P) vizinho cortado na borda
       if (window.CROQUI_DEPURAR && r) (window.CROQUI_PERTO = window.CROQUI_PERTO || []).push(`${r.nome}@${g.x.toFixed(3)},${g.y.toFixed(3)} ${r.perto.toFixed(3)}`);
-      if (r?.nome && r.perto <= PERTO_DO_GRUPO) achados.push({ nome: r.nome, pag, x: g.x, y: g.y, comP: r.comP });
+      if (r?.nome && r.perto <= PERTO_DO_GRUPO) achados.push({ nome: r.nome, pag, x: g.x, y: g.y, comP: r.comP, perto: r.perto });
       // a cada grupo: guarda até onde foi (no celular a página pode ser fechada) e o (P) lido
       if (aoGuardar) await aoGuardar(i + 1, achados);
     }
@@ -1848,10 +1848,14 @@
     // o mesmo nome duas vezes (o (P6) do "DETALHE A" e o da rua): fica o que está junto dos
     // outros pontos (o detalhe é um quadro à parte, longe da rede)
     const pertoDosOutros = (p) => Math.min(...achados.filter((q) => q !== p && q.nome !== p.nome).map((q) => Math.hypot(q.x - p.x, q.y - p.y)), 9);
+    // e o mesmo nome lido por um grupo verde vizinho (a árvore verde ao lado do "(P20)"): fica o
+    // grupo em que o rótulo estava no centro da leitura, que é o próprio rótulo
+    const centro = (p) => p.perto ?? 0;
     const unicos = new Map();
     for (const p of achados) {
       const ja = unicos.get(p.nome);
-      if (!ja || pertoDosOutros(p) < pertoDosOutros(ja)) unicos.set(p.nome, p);
+      const melhor = !ja || (Math.abs(centro(p) - centro(ja)) > 0.05 ? centro(p) < centro(ja) : pertoDosOutros(p) < pertoDosOutros(ja));
+      if (melhor) unicos.set(p.nome, p);
     }
     return corrigirNumeros([...unicos.values()]);
   }

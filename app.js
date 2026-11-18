@@ -904,9 +904,15 @@
       let nome = x.nome, ja = comNome(nome);
       // outro croqui da obra pode recomeçar do P1: o da outra folha vira "P1-F2"
       if (ja?.croqui && (ja.croqui.pag || 1) !== x.pag) { nome = `${x.nome}-F${x.pag}`; ja = comNome(nome); }
-      if (ja) { if (!ja.croqui) ja.croqui = croqui; continue; }
+      if (ja) {
+        if (!ja.croqui) ja.croqui = croqui;
+        // provisório marcado por um grupo vizinho (árvore verde): o rótulo lido no centro vale
+        else if (provisorio && ja.provisorio && (x.perto ?? 1) + 0.05 < (ja.perto ?? 1)) ja.croqui = croqui;
+        if (provisorio && ja.provisorio) ja.perto = Math.min(ja.perto ?? 1, x.perto ?? 1);
+        continue;
+      }
       // sem data: a data de execução entra quando o 1º serviço for lançado
-      o.pontos.push({ id: novoId(), nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true, ...(provisorio ? { provisorio: true } : {}) });
+      o.pontos.push({ id: novoId(), nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true, ...(provisorio ? { provisorio: true, perto: x.perto ?? 1 } : {}) });
     }
   }
   /** Fim da folha: os provisórios viram definitivos com o nome e o lugar conferidos. O que a
@@ -921,6 +927,7 @@
       const f = porNome.get(base(p.nome));
       if (f) p.croqui = { pag, x: arred(f.x), y: arred(f.y) };
       delete p.provisorio;
+      delete p.perto;
     }
     juntarPontos(o, finais);
   }
@@ -949,6 +956,8 @@
           // só o número de pontos do título (refazer a tela tiraria o zoom de lugar)
           const sub = document.querySelector(".cq-titulo small");
           if (sub) sub.textContent = `${plural(postes(o).filter((p) => p.croqui).length, "ponto", "pontos")} no croqui`;
+          const daFolha = document.querySelector(".cq-folhas span small");
+          if (daFolha) daFolha.textContent = plural(postes(o).filter((p) => p.croqui && (p.croqui.pag || 1) === estado.cqPag).length, "ponto", "pontos");
         }
       } else {
         await Banco.salvarObra({ ...o, dono: true });
@@ -972,9 +981,9 @@
             await guardarAnalise(obra.id, { pag, grupo, parciais, pags });
             // cada (P) lido já entra na obra e aparece no croqui, sem esperar a folha acabar
             const o = await valendo();
-            const antes = o.pontos.length;
+            const antes = JSON.stringify(o.pontos.map((x) => x.croqui));
             juntarPontos(o, parciais, true);
-            if (o.pontos.length !== antes) await gravarObra(o);
+            if (JSON.stringify(o.pontos.map((x) => x.croqui)) !== antes) await gravarObra(o);
           },
         });
         // excluída enquanto lia: não grava a obra de novo (ela voltaria para a lista e o banco)
