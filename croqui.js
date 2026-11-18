@@ -1153,13 +1153,16 @@
 
   /** Nome do poste escrito no projeto mais perto de `pos` ({ pag, x, y } em fração da
    *  folha): { nome: "P1", texto: "F.P1" } ou null. */
+  // ângulo em que o último (P) desta folha ficou de pé: os rótulos de uma folha costumam
+  // estar todos no mesmo sentido, então o próximo toque tenta esse primeiro (bem mais rápido)
+  const angulosQueDeram = new Map();
   function lerPoste(proj, pos) {
     return naFila(async () => {
       // lê em tamanhos diferentes e fica com o nome que mais se repete: o OCR às vezes troca
-      // um número num deles ("(P5)" lido "(P3)")
-      const votos = new Map();
+      // um número num deles ("(P5)" lido "(P3)"). Os ângulos são medidos uma vez só por toque.
+      const votos = new Map(), ctx = { k: `${chaveDe(proj)}|${pos.pag || 1}`, angulos: null };
       for (const px of window.CROQUI_TAMANHOS || [700, 900, 1150]) {
-        const achou = await lerPosteEm(proj, pos, px);
+        const achou = await lerPosteEm(proj, pos, px, ctx);
         if (!achou) continue;
         const v = votos.get(achou.nome) || { ...achou, n: 0 };
         v.n++;
@@ -1182,17 +1185,35 @@
     filaOcr = vez.catch(() => {});
     return vez;
   }
-  async function lerPosteEm(proj, pos, px) {
+  async function lerPosteEm(proj, pos, px, ctx = {}) {
     const w = await prepararLeitura();
     const im = await imagem(proj, { pag: pos.pag || 1, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura: 0.12, proporcao: 2 } });
     // projeto torto, em pé ou de cabeça para baixo: endireita e tenta cada ângulo até achar.
     // Vale de cara só a leitura com o "P" na frente do número: de cabeça para baixo o
     // "(P68)" vira "(89d)" e, sem o P, saía "P89" (o 6 vira 9 e a ordem inverte)
     let reserva = null;
-    for (const ang of await angulosDe(proj, pos.pag || 1, im.cv)) {
+    const tentados = [];
+    const tenta = async (ang) => {
+      tentados.push(ang);
       const achou = await lerPosteGirado(w, ang ? girar(im.cv, ang) : im.cv);
-      if (achou?.comP) return { nome: achou.nome, texto: achou.texto, comP: true, perto: achou.perto };
+      if (achou?.comP) {
+        if (ctx.k) angulosQueDeram.set(ctx.k, ang);
+        return { nome: achou.nome, texto: achou.texto, comP: true, perto: achou.perto };
+      }
       if (achou?.nome && !achou.virado && !reserva) reserva = { nome: achou.nome, texto: achou.texto, comP: false, perto: achou.perto };
+      return null;
+    };
+    // 1º o ângulo que deu certo no último toque desta folha (nem mede a inclinação)
+    const lembrado = ctx.k ? angulosQueDeram.get(ctx.k) : undefined;
+    if (lembrado !== undefined) {
+      const r = await tenta(lembrado);
+      if (r) return r;
+    }
+    if (!ctx.angulos) ctx.angulos = await angulosDe(proj, pos.pag || 1, im.cv);
+    for (const ang of ctx.angulos) {
+      if (tentados.some((a) => Math.abs(a - ang) < 0.75)) continue;
+      const r = await tenta(ang);
+      if (r) return r;
     }
     return reserva;
   }
@@ -1941,8 +1962,9 @@
 
   /** deixa tudo pronto para a 1ª leitura: os dois leitores e a inclinação da folha */
   function prepararProjeto(proj, pag = 1) {
-    // no celular nada pesado ao abrir: o leitor carrega no 1º toque no poste
-    if (CELULAR) return Promise.resolve();
+    // no celular só o leitor (um), por trás: o 1º toque no poste já não espera ele carregar.
+    // Os dois leitores e a folha inteira juntos faziam o app fechar (versão 31)
+    if (CELULAR) return prepararLeitura(1);
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
