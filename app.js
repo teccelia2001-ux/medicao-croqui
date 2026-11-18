@@ -1313,6 +1313,10 @@
         ${soLeitura(o) ? "" : p.vao ? `<button type="button" class="botao botao-claro" data-acao="cq-ajustar-vao" data-id="${p.id}">↔ Ajustar linha</button>`
           : `<button type="button" class="botao botao-claro" data-acao="cq-mover" data-id="${p.id}">${p.croqui ? "↔ Mudar lugar" : "📌 Marcar no croqui"}</button>`}
       </div>
+      ${soLeitura(o) ? "" : `<div class="dupla cq-so-fotos">
+        <button type="button" class="botao botao-claro" data-acao="cq-camera" data-id="${p.id}">📷 Tirar foto</button>
+        <label class="botao botao-claro">🖼 Galeria<input type="file" accept="image/*" multiple data-acao="foto" data-origem="galeria" data-ponto="${p.id}" hidden></label>
+      </div>`}
       ${soLeitura(o) ? "" : `<button type="button" class="link cq-excluir" data-acao="cq-excluir" data-id="${p.id}">🗑 Excluir ${p.vao ? "o" : "ponto"} ${esc(p.nome)}</button>`}
     </div>`;
   }
@@ -3284,6 +3288,9 @@
         return render();
       }
       case "camera": return abrirCamera();
+      case "cq-camera": // só as fotos do ponto escolhido no croqui (sem abrir a tela do ponto)
+        estado.pontoId = alvo.dataset.id;
+        return abrirCamera();
       case "ver-foto":
         estado.foto = { id: alvo.dataset.id };
         return render();
@@ -3420,6 +3427,8 @@
     if (t.dataset.acao === "foto") {
       const arquivos = [...t.files];
       t.value = "";
+      // do resumo do ponto no croqui: as fotos vão para o ponto escolhido, sem abrir a tela dele
+      if (t.dataset.ponto) estado.pontoId = t.dataset.ponto;
       return receberFotos(arquivos, t.dataset.origem || "galeria");
     }
     if (t.dataset.acao === "copia-fotos") {

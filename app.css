@@ -1114,3 +1114,4 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-painel .rodape > .botao { width: 100%; min-width: 0; }
 .nota-rapidas { display: flex; flex-wrap: wrap; gap: 6px; }
 .nota-rapida { cursor: pointer; font-weight: 700; color: #1d4ed8; background: #eff6ff; border: 1.5px solid #bfdbfe; }
+.cq-so-fotos .botao { min-height: 42px; }
