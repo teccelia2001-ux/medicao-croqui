@@ -1306,8 +1306,8 @@
       ${p.obs ? `<p class="cq-obs">${esc(p.obs)}</p>` : ""}
       <div class="cq-corpo">
         ${secoes || `<p class="vazio">Nenhum serviço lançado neste ponto ainda.</p>`}
-        ${fotos ? `<div class="cq-fotos">${fotos}</div>` : ""}
       </div>
+      ${fotos ? `<div class="cq-fotos" aria-label="Fotos do ponto">${fotos}</div>` : ""}
       <div class="dupla">
         <button type="button" class="botao" data-acao="abrir-ponto" data-id="${p.id}">${soLeitura(o) ? "Abrir o ponto" : "✏️ Lançar serviços e fotos"}</button>
         ${soLeitura(o) ? "" : p.vao ? `<button type="button" class="botao botao-claro" data-acao="cq-ajustar-vao" data-id="${p.id}">↔ Ajustar linha</button>`

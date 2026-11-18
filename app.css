@@ -913,7 +913,7 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: min(58%, 520px);
+  max-height: min(70%, 580px);
   animation: cq-sobe 0.18s ease-out;
 }
 @keyframes cq-sobe { from { transform: translateY(30px); opacity: 0.4; } }
@@ -921,18 +921,18 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-folha-topo > b:first-child { flex: 1; font-size: 18px; }
 .cq-nome { font-size: 22px !important; }
 .cq-obs { margin: 0; font-size: 14px; color: #334155; }
-.cq-corpo { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.cq-corpo { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 58px; overflow-y: auto; overscroll-behavior: contain; } /* os serviços nunca somem de todo */
 .cq-secao { display: flex; flex-direction: column; gap: 2px; }
 .cq-secao .secao { padding: 5px 10px; font-size: 13px !important; font-weight: 700; }
 .cq-item { display: flex; justify-content: space-between; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--borda); font-size: 15px; }
 .cq-item:last-child { border-bottom: 0; }
 .cq-item small { color: var(--suave); font-size: 12px; }
 .cq-item b { white-space: nowrap; }
-.cq-fotos { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0; }
+.cq-fotos { display: flex; flex: none; gap: 6px; overflow-x: auto; padding: 2px 0; } /* fora da parte que rola: sempre à vista */
 .cq-mini {
   flex: none;
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   padding: 0;
   border: 1px solid var(--borda);
   border-radius: 10px;
