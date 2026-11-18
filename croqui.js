@@ -476,6 +476,10 @@
     _redimensionou() {
       const cw = this.el.clientWidth, ch = this.el.clientHeight;
       if (!cw || !ch) return; // fora da tela
+      // teclado aberto (digitando o nome do ponto, a anotação...): o celular encolhe a tela, mas o
+      // croqui fica parado onde estava (antes reajustava o zoom e o desenho pulava)
+      const digitando = document.activeElement?.matches?.("input, textarea") && !this.el.contains(document.activeElement);
+      if (digitando && this.cw && this._ajustado) return;
       if (this.cw && this._ajustado && (cw !== this.cw || ch !== this.ch)) {
         // girou o celular ou mudou a janela: o meio continua no meio
         this.tx += (cw - this.cw) / 2;
