@@ -1313,9 +1313,8 @@
         ${soLeitura(o) ? "" : p.vao ? `<button type="button" class="botao botao-claro" data-acao="cq-ajustar-vao" data-id="${p.id}">↔ Ajustar linha</button>`
           : `<button type="button" class="botao botao-claro" data-acao="cq-mover" data-id="${p.id}">${p.croqui ? "↔ Mudar lugar" : "📌 Marcar no croqui"}</button>`}
       </div>
-      ${soLeitura(o) ? "" : `<div class="dupla cq-so-fotos">
+      ${soLeitura(o) ? "" : `<div class="cq-so-fotos">
         <button type="button" class="botao botao-claro" data-acao="cq-camera" data-id="${p.id}">📷 Tirar foto</button>
-        <label class="botao botao-claro">🖼 Galeria<input type="file" accept="image/*" multiple data-acao="foto" data-origem="galeria" data-ponto="${p.id}" hidden></label>
       </div>`}
       ${soLeitura(o) ? "" : `<button type="button" class="link cq-excluir" data-acao="cq-excluir" data-id="${p.id}">🗑 Excluir ${p.vao ? "o" : "ponto"} ${esc(p.nome)}</button>`}
     </div>`;
