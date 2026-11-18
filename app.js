@@ -895,45 +895,54 @@
     if (dados) todas[id] = dados; else delete todas[id];
     await Banco.gravar("analises", todas);
   }
-  /** os pontos achados numa folha entram na obra (já lançado só ganha o lugar). `provisorio`:
-   *  lido agora, antes de a folha terminar (no fim dela a sequência é conferida) */
-  function juntarPontos(o, achados, provisorio = false) {
-    for (const x of achados) {
-      const croqui = { pag: x.pag, x: arred(x.x), y: arred(x.y) };
-      const comNome = (n) => M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === n);
-      let nome = x.nome, ja = comNome(nome);
-      // outro croqui da obra pode recomeçar do P1: o da outra folha vira "P1-F2"
-      if (ja?.croqui && (ja.croqui.pag || 1) !== x.pag) { nome = `${x.nome}-F${x.pag}`; ja = comNome(nome); }
-      if (ja) {
-        if (!ja.croqui) ja.croqui = croqui;
-        // provisório marcado por um grupo vizinho (árvore verde): o rótulo lido no centro vale
-        else if (provisorio && ja.provisorio && (x.perto ?? 1) + 0.05 < (ja.perto ?? 1)) ja.croqui = croqui;
-        if (provisorio && ja.provisorio) ja.perto = Math.min(ja.perto ?? 1, x.perto ?? 1);
-        continue;
-      }
-      // sem data: a data de execução entra quando o 1º serviço for lançado
-      o.pontos.push({ id: novoId(), nome, dia: "", obs: "", gps: null, croqui, itens: [], fotos: [], doProjeto: true, ...(provisorio ? { provisorio: true, perto: x.perto ?? 1 } : {}) });
-    }
+
+  // ---------- os (P) lidos do projeto (o supervisor decide os pontos: 18/11/2026)
+  // A análise só lê os rótulos (P) de cada folha e guarda nome e lugar no aparelho:
+  // { [obraId]: { em, pags: { [pag]: [{ nome, x, y }] } } }. Tocar no poste pega o nome daqui na
+  // hora, sem esperar o OCR; o ponto só nasce quando o supervisor toca.
+  let rotulosCache = null;
+  async function todosRotulos() {
+    if (!rotulosCache) rotulosCache = await Banco.ler("rotulos", {});
+    return rotulosCache;
   }
-  /** Fim da folha: os provisórios viram definitivos com o nome e o lugar conferidos. O que a
-   *  conferência tirou ou renomeou ("P17" -> P117, símbolo verde) sai, se nada foi lançado nele. */
-  function conferirFolha(o, pag, finais) {
-    const base = (n) => n.trim().toUpperCase().replace(/-F\d+$/, "");
-    const porNome = new Map(finais.map((x) => [x.nome, x]));
-    const intocado = (p) => !p.itens.length && !p.fotos.length && !(p.obs || "").trim();
-    o.pontos = o.pontos.filter((p) => !(p.provisorio && (p.croqui?.pag || 1) === pag && intocado(p) && !porNome.has(base(p.nome))));
-    for (const p of o.pontos) {
-      if (!p.provisorio || (p.croqui?.pag || 1) !== pag) continue;
-      const f = porNome.get(base(p.nome));
-      if (f) p.croqui = { pag, x: arred(f.x), y: arred(f.y) };
-      delete p.provisorio;
-      delete p.perto;
-    }
-    juntarPontos(o, finais);
+  async function guardarRotulos(o, pag, lista) {
+    const todos = await todosRotulos();
+    const em = o.projeto?.em || "";
+    if (!todos[o.id] || todos[o.id].em !== em) todos[o.id] = { em, pags: {} };
+    todos[o.id].pags[pag] = lista.map((x) => ({ nome: x.nome, x: arred(x.x), y: arred(x.y) }));
+    await Banco.gravar("rotulos", todos);
   }
-  /** retoma a análise que parou (tela recarregada, app fechado): a primeira da fila */
+  /** o (P) já lido mais perto do toque, ou null (até 8% da largura da folha) */
+  async function rotuloPerto(o, pos) {
+    const r = (await todosRotulos())[o.id];
+    if (!r || r.em !== (o.projeto?.em || "")) return null;
+    const lista = r.pags[pos.pag] || [];
+    const k = visor?.W ? (visor.giro % 180 ? visor.W / visor.H : visor.H / visor.W) : 1.3; // altura/largura da folha
+    let melhor = null;
+    for (const x of lista) {
+      const d = Math.hypot(x.x - pos.x, (x.y - pos.y) * k);
+      if (d < 0.08 && (!melhor || d < melhor.d)) melhor = { ...x, d };
+    }
+    return melhor;
+  }
+  /** quantos (P) já foram lidos na obra */
+  async function contarRotulos(o) {
+    const r = (await todosRotulos())[o.id];
+    return r ? Object.values(r.pags).reduce((n, l) => n + l.length, 0) : 0;
+  }
+  /** Pontos vazios que a análise antiga (até a versão 45) criava sozinha: saem da obra. O que
+   *  tem serviço, foto ou observação fica. */
+  function tirarPontosAutomaticos(o) {
+    const antes = o.pontos.length;
+    // poste que é começo ou fim de um vão fica (o vão precisa dele)
+    const doVao = new Set(o.pontos.filter((p) => p.vao).flatMap((v) => [v.vao.de, v.vao.para]));
+    o.pontos = o.pontos.filter((p) => !(p.doProjeto && !doVao.has(p.id) && !p.itens.length && !p.fotos.length && !(p.obs || "").trim()));
+    o.pontos.forEach((p) => { delete p.provisorio; delete p.perto; });
+    return antes - o.pontos.length;
+  }
+  /** retoma a leitura que parou (tela recarregada, app fechado): a primeira da fila */
   async function retomarAnalise() {
-    if (estado.analise?.fase === "pontos" || estado.analise?.fase === "servicos") return;
+    if (estado.analise?.fase === "pontos") return;
     const todas = await lerAnalises();
     for (const [id, dados] of Object.entries(todas)) {
       const obra = await Banco.obterObra(id);
@@ -943,30 +952,22 @@
   }
 
   async function analisarProjeto(obra, retomar = null) {
-    if (!obra?.projeto || soLeitura(obra) || estado.analise?.fase === "pontos" || estado.analise?.fase === "servicos") return;
+    if (!obra?.projeto || soLeitura(obra) || estado.analise?.fase === "pontos") return;
     const a = (estado.analise = { obraId: obra.id, numero: obra.numero, fase: "pontos", feitos: 0, total: 0, achados: 0, pag: retomar?.pag || 1, pags: retomar?.pags || 1 });
     mostrarAnalise();
     // a obra pode ter sido recarregada no meio: trabalha na que está valendo
     const valendo = async () => (estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra);
-    const gravarObra = async (o) => {
-      if (estado.obra === o) {
-        await salvarAgora();
-        if (estado.tela === "croqui") {
-          atualizarMarcas();
-          // só o número de pontos do título (refazer a tela tiraria o zoom de lugar)
-          const sub = document.querySelector(".cq-titulo small");
-          if (sub) sub.textContent = `${plural(postes(o).filter((p) => p.croqui).length, "ponto", "pontos")} no croqui`;
-          const daFolha = document.querySelector(".cq-folhas span small");
-          if (daFolha) daFolha.textContent = plural(postes(o).filter((p) => p.croqui && (p.croqui.pag || 1) === estado.cqPag).length, "ponto", "pontos");
-        }
-      } else {
-        await Banco.salvarObra({ ...o, dono: true });
-        enviarDepois();
-      }
-    };
     try {
       const proj = await garantirProjeto(obra);
       if (!proj) throw new Error("O projeto não está neste celular.");
+      // os pontos vazios que a análise antiga criou sozinha saem (agora o supervisor decide)
+      {
+        const o = await valendo();
+        if (tirarPontosAutomaticos(o)) {
+          if (estado.obra === o) { await salvarAgora(); if (estado.tela === "croqui") render(); }
+          else { await Banco.salvarObra({ ...o, dono: true }); enviarDepois(); }
+        }
+      }
       const pags = await Croqui.paginas(proj);
       a.pags = pags;
       const excluida = async () => (await obrasExcluidas()).has(obra.id);
@@ -979,48 +980,28 @@
           parciais: doMeio?.parciais || [],
           aoGuardar: async (grupo, parciais) => {
             await guardarAnalise(obra.id, { pag, grupo, parciais, pags });
-            // cada (P) lido já entra na obra e aparece no croqui, sem esperar a folha acabar
-            const o = await valendo();
-            const antes = JSON.stringify(o.pontos.map((x) => x.croqui));
-            juntarPontos(o, parciais, true);
-            if (JSON.stringify(o.pontos.map((x) => x.croqui)) !== antes) await gravarObra(o);
+            // cada (P) lido já vale para o toque, sem esperar a folha acabar
+            await guardarRotulos(obra, pag, parciais);
           },
         });
-        // excluída enquanto lia: não grava a obra de novo (ela voltaria para a lista e o banco)
         if (await excluida()) throw new Error("A obra foi excluída.");
-        // cada folha já entra na obra ao terminar: o que foi achado não se perde
-        const o = await valendo();
-        conferirFolha(o, pag, daFolha);
+        // fim da folha: a lista conferida (P17 -> P117, símbolo verde fora) substitui a parcial
+        await guardarRotulos(obra, pag, daFolha);
         a.achados += daFolha.length;
-        await gravarObra(o);
         await guardarAnalise(obra.id, pag < pags ? { pag: pag + 1, grupo: 0, parciais: [], pags } : null);
       }
-      const o = await valendo();
-      // as sugestões de cada ponto, uma de cada vez (ficam guardadas no aparelho)
-      const comLugar = sugestaoLigada() ? M.pontosReais(o.pontos).filter((p) => p.croqui) : [];
-      a.semSugestao = !sugestaoLigada();
-      Object.assign(a, { fase: "servicos", feitos: 0, total: comLugar.length });
-      mostrarAnalise();
-      for (const p of comLugar) {
-        if (await excluida()) break;
-        await lerSugestoes(o, p.croqui, p.nome);
-        a.feitos++;
-        mostrarAnalise();
-      }
       a.fase = "pronto";
-      a.definidos = postes(o).filter((p) => p.croqui).length;
-      // avisa em qualquer tela (o projeto grande leva minutos): o aviso do croqui fica até fechar
-      avisar(`✓ Obra ${obra.numero}: todos os pontos definidos (${plural(a.definidos, "ponto", "pontos")}${pags > 1 ? ` em ${pags} folhas` : ""}).`, "ok", 9000);
+      a.lidos = await contarRotulos(obra);
+      avisar(`✓ Obra ${obra.numero}: ${plural(a.lidos, "(P) lido", "(P) lidos")}${pags > 1 ? ` em ${pags} folhas` : ""}. Toque no poste para marcar.`, "ok", 9000);
       try { navigator.vibrate?.([150, 80, 150]); } catch (e) { /* sem vibrar */ }
     } catch (e) {
-      console.warn("análise do projeto:", e);
+      console.warn("leitura do projeto:", e);
       Object.assign(a, { fase: "erro", erro: e.message });
       if (/excluída/.test(e.message || "")) await guardarAnalise(obra.id, null);
-      else avisar(`Não deu para definir os pontos da obra ${obra.numero}: ${e.message}`, "erro", 9000);
+      else avisar(`Não deu para ler os (P) da obra ${obra.numero}: ${e.message}`, "erro", 9000);
     }
     mostrarAnalise();
-    if (estado.tela === "croqui" && estado.obra?.id === obra.id) render(); // título com o total de pontos
-    // outra obra ficou com a análise pela metade: segue com ela
+    // outra obra ficou com a leitura pela metade: segue com ela
     if (a.fase === "pronto") setTimeout(retomarAnalise, 1000);
   }
   /** andamento da análise de 0 a 100 (as folhas uma depois da outra) */
@@ -1030,13 +1011,13 @@
     const a = estado.analise;
     if (!a) return "";
     if (a.fase === "pontos" || a.fase === "servicos") {
-      return `<div class="faixa faixa-analise"><span>🔎 Definindo os pontos da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%</span></div>`;
+      return `<div class="faixa faixa-analise"><span>🔎 Lendo os (P) da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%</span></div>`;
     }
     if (a.fase === "pronto") {
-      return `<div class="faixa faixa-ok faixa-analise"><span>✓ Obra <b>${esc(a.numero)}</b>: todos os pontos definidos (${plural(a.definidos ?? a.achados, "ponto", "pontos")}${a.pags > 1 ? ` em ${a.pags} folhas` : ""}).</span>
+      return `<div class="faixa faixa-ok faixa-analise"><span>✓ Obra <b>${esc(a.numero)}</b>: ${plural(a.lidos ?? a.achados, "(P) lido", "(P) lidos")}${a.pags > 1 ? ` em ${a.pags} folhas` : ""}. Toque no poste e o nome vem na hora.</span>
         <span class="faixa-botoes"><button type="button" class="link" data-acao="abrir-obra" data-id="${esc(a.obraId)}">Ver no croqui</button><button type="button" class="remover" data-acao="analise-ok" aria-label="Fechar">×</button></span></div>`;
     }
-    return `<div class="faixa faixa-erro faixa-analise"><span>Não deu para definir os pontos da obra ${esc(a.numero)}${a.erro ? `: ${esc(a.erro)}` : ""}.</span><button type="button" class="remover" data-acao="analise-ok" aria-label="Fechar">×</button></div>`;
+    return `<div class="faixa faixa-erro faixa-analise"><span>Não deu para ler os (P) da obra ${esc(a.numero)}${a.erro ? `: ${esc(a.erro)}` : ""}.</span><button type="button" class="remover" data-acao="analise-ok" aria-label="Fechar">×</button></div>`;
   }
 
   function analiseHtml(o) {
@@ -1044,11 +1025,11 @@
     if (!a || a.obraId !== o.id) return "";
     if (a.fase === "pronto" || a.fase === "erro") {
       const t = a.fase === "pronto"
-        ? `✓ <b>Todos os pontos definidos</b>: ${plural(a.definidos ?? a.achados, "ponto", "pontos")}${a.pags > 1 ? ` nas ${a.pags} folhas` : ""}. Se faltar algum, toque no poste.`
-        : `Não deu para definir os pontos${a.erro ? `: ${esc(a.erro)}` : ""}.`;
+        ? `✓ <b>${plural(a.lidos ?? a.achados, "(P) lido", "(P) lidos")}</b>${a.pags > 1 ? ` nas ${a.pags} folhas` : ""}. Toque no poste: o nome vem na hora.`
+        : `Não deu para ler os (P)${a.erro ? `: ${esc(a.erro)}` : ""}.`;
       return `<div class="cq-dica cq-analise cq-analise-fim${a.fase === "erro" ? " cq-analise-erro" : ""}" id="cq-analise"><span>${t}</span><button type="button" class="link" data-acao="analise-ok">OK</button></div>`;
     }
-    const t = a.fase === "pontos" ? `🔎 Definindo os pontos (P)${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""}… ${andamentoAnalise(a)}%`
+    const t = a.fase === "pontos" ? `🔎 Lendo os (P) do projeto${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""}… ${andamentoAnalise(a)}%`
       : `🔎 Lendo os serviços de cada ponto… ${a.feitos} de ${a.total}`;
     return `<div class="cq-dica cq-analise" id="cq-analise"><span>${t}</span></div>`;
   }
@@ -1321,8 +1302,12 @@
     const o = estado.obra;
     let achou = null;
     try {
-      const proj = await garantirProjeto(o);
-      if (proj) achou = await Croqui.lerPoste(proj, n);
+      const guardado = await rotuloPerto(o, n);
+      if (guardado) achou = { nome: guardado.nome, texto: `(${guardado.nome})` };
+      else {
+        const proj = await garantirProjeto(o);
+        if (proj) achou = await Croqui.lerPoste(proj, n);
+      }
     } catch (e) {
       console.warn("leitura do nome do poste:", e);
     }
