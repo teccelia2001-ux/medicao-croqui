@@ -690,6 +690,7 @@
       <section class="cartao dados">
         <b>Versão do app</b>
         <p class="sub">Você está na <b>versão ${esc(versaoAtual().numero)}</b>${versaoAtual().data ? ` · de ${esc(versaoAtual().data)}` : ""}.</p>
+        <p class="sub">Tela deste aparelho: ${esc(medidaDaTela())}</p>
         ${estado.novaVersao
           ? `<p class="versao-nova">Nova versão ${esc(estado.novaVersao.numero)} disponível${estado.novaVersao.data ? ` (${esc(estado.novaVersao.data)})` : ""}.</p>
             <button type="button" class="botao" data-acao="atualizar-app">⬇ Atualizar agora</button>
@@ -3721,6 +3722,24 @@
   /* versao.js diz o número; o app pergunta ao servidor se saiu outro (ao abrir, ao
      voltar o sinal, ao voltar para o app e a cada 15 min) e mostra em Ajustes. */
   const versaoAtual = () => window.VERSAO_APP || { numero: "?", data: "" };
+  /** tamanho da tela como o app enxerga (para achar o que corta num aparelho):
+   *  largura × altura, zoom da página e, se algo passa da borda, o que é */
+  function medidaDaTela() {
+    const vv = window.visualViewport, W = innerWidth, H = innerHeight;
+    let txt = `${W}×${H} px · densidade ${(devicePixelRatio || 1).toFixed(2)}`;
+    if (vv && Math.abs(vv.scale - 1) > 0.01) txt += ` · zoom da página ${vv.scale.toFixed(2)}`;
+    if (screen?.width) txt += ` · aparelho ${screen.width}×${screen.height}`;
+    const larga = document.documentElement.scrollWidth;
+    if (larga > W + 1) {
+      let pior = null;
+      for (const e of document.body.querySelectorAll("*")) {
+        const r = e.getBoundingClientRect();
+        if (r.right > W + 1 && (!pior || r.right > pior.r)) pior = { e, r: r.right };
+      }
+      txt += ` · passa da borda: ${larga} px${pior ? ` (${pior.e.tagName.toLowerCase()}.${String(pior.e.className).split(" ")[0]})` : ""}`;
+    }
+    return txt;
+  }
   async function procurarVersao(manual = false) {
     if (!navigator.onLine) { if (manual) avisar("Sem internet para procurar atualização.", "erro"); return; }
     if (manual) { estado.procurandoVersao = true; if (estado.tela === "config") render(); }
