@@ -912,7 +912,7 @@
     todos[o.id].pags[pag] = lista.map((x) => ({ nome: x.nome, x: arred(x.x), y: arred(x.y) }));
     await Banco.gravar("rotulos", todos);
   }
-  /** o (P) já lido mais perto do toque, ou null (até 8% da largura da folha) */
+  /** o (P) já lido bem embaixo do toque, ou null (aí o OCR lê na hora) */
   async function rotuloPerto(o, pos) {
     const em = o.projeto?.em || "";
     const local = (await todosRotulos())[o.id];
@@ -923,12 +923,18 @@
     const lista = daqui || daObra || [];
     if (!lista.length) return null;
     const k = visor?.W ? (visor.giro % 180 ? visor.W / visor.H : visor.H / visor.W) : 1.3; // altura/largura da folha
+    // largura da folha na tela, em px (com o zoom de agora)
+    const larguraTela = visor?.W ? (visor.giro % 180 ? visor.H : visor.W) * visor.s : 0;
     let melhor = null;
     for (const x of lista) {
       const d = Math.hypot(x.x - pos.x, (x.y - pos.y) * k);
-      if (d < 0.08 && (!melhor || d < melhor.d)) melhor = { ...x, d };
+      if (!melhor || d < melhor.d) melhor = { ...x, d };
     }
-    return melhor;
+    // vale só o (P) bem embaixo do dedo: com vários (P) juntos, o rótulo que a leitura não pegou
+    // (P16, P17...) não pode virar o vizinho lido (P14). Mais longe: o OCR lê ali na hora
+    if (!melhor) return null;
+    const px = larguraTela ? melhor.d * larguraTela : 0;
+    return melhor.d <= 0.012 && (!larguraTela || px <= 16) ? melhor : null;
   }
   /** quantos (P) já foram lidos na obra */
   async function contarRotulos(o) {
