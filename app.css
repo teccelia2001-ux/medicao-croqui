@@ -1067,3 +1067,4 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-analise-fim .link { color: #fff; font-weight: 800; text-decoration: underline; padding: 2px 6px; }
 .cq-analise-erro { background: #b91c1c; border-color: #b91c1c; }
 .faixa-analise > span:first-child { flex: 1 1 180px; }
+.faixa-fila { background: #fffbeb; color: #78350f; }

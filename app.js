@@ -964,14 +964,47 @@
   });
 
   /** retoma a leitura que parou (tela recarregada, app fechado): a primeira da fila */
+  // obra que deu erro nesta abertura do app (ex.: projeto não baixado): não trava a fila; tenta
+  // de novo na próxima vez que o app abrir
+  const falharamAgora = new Set();
   async function retomarAnalise() {
-    if (estado.analise?.fase === "pontos") return;
+    if (estado.analise?.fase === "pontos") return atualizarFila();
     const todas = await lerAnalises();
-    for (const [id, dados] of Object.entries(todas)) {
+    // pela ordem do pedido (a que parou no meio continua primeiro)
+    const ordem = Object.entries(todas).sort((x, y) => (x[1].fila || 0) - (y[1].fila || 0));
+    for (const [id, dados] of ordem) {
+      if (falharamAgora.has(id)) continue;
       const obra = await Banco.obterObra(id);
       if (!obra?.projeto || soLeitura(obra) || (await obrasExcluidas()).has(id)) { await guardarAnalise(id, null); continue; }
       return analisarProjeto(obra, dados);
     }
+    return atualizarFila();
+  }
+  /** obras esperando a vez de ler os (P), para mostrar na lista */
+  async function atualizarFila() {
+    const todas = await lerAnalises();
+    const ids = Object.entries(todas).sort((x, y) => (x[1].fila || 0) - (y[1].fila || 0)).map(([id]) => id)
+      .filter((id) => id !== estado.analise?.obraId || estado.analise?.fase !== "pontos");
+    const fila = [];
+    for (const id of ids) {
+      const o = await Banco.obterObra(id);
+      if (o) fila.push({ id, numero: o.numero });
+    }
+    estado.filaAnalise = fila;
+    mostrarAnalise();
+  }
+  /** Pede a leitura dos (P) da obra, do começo. Com outra obra sendo lida, entra na fila e
+   *  começa sozinha quando a vez chegar (a fila fica guardada: sobrevive à tela recarregar). */
+  async function pedirAnalise(o) {
+    if (!o?.projeto || soLeitura(o)) return;
+    if (estado.analise?.fase === "pontos" && estado.analise.obraId === o.id) return avisar(`Os (P) da obra ${o.numero} já estão sendo lidos.`, "guardado");
+    falharamAgora.delete(o.id);
+    await guardarAnalise(o.id, { pag: 1, grupo: 0, parciais: [], pags: o.projeto.paginas || null, fila: Date.now() });
+    if (estado.analise?.fase === "pontos") {
+      avisar(`Obra ${o.numero} na fila: os (P) dela são lidos quando a obra ${estado.analise.numero} terminar.`, "guardado", 6000);
+      return atualizarFila();
+    }
+    return retomarAnalise();
   }
 
   async function analisarProjeto(obra, retomar = null) {
@@ -979,6 +1012,7 @@
     const a = (estado.analise = { obraId: obra.id, numero: obra.numero, fase: "pontos", feitos: 0, total: 0, achados: 0, pag: retomar?.pag || 1, pags: retomar?.pags || 1 });
     mostrarAnalise();
     manterTelaLigada(true);
+    atualizarFila();
     // a obra pode ter sido recarregada no meio: trabalha na que está valendo
     const valendo = async () => (estado.obra?.id === obra.id ? estado.obra : (await Banco.obterObra(obra.id)) || obra);
     try {
@@ -998,12 +1032,12 @@
       for (let pag = retomar?.pag || 1; pag <= pags; pag++) {
         if (await excluida()) throw new Error("A obra foi excluída.");
         const doMeio = retomar && retomar.pag === pag ? retomar : null; // folha que parou no meio
-        await guardarAnalise(obra.id, { pag, grupo: doMeio?.grupo || 0, parciais: doMeio?.parciais || [], pags });
+        await guardarAnalise(obra.id, { pag, grupo: doMeio?.grupo || 0, parciais: doMeio?.parciais || [], pags, fila: retomar?.fila || 1 });
         const daFolha = await Croqui.acharPontos(proj, pag, (f, t) => { Object.assign(a, { feitos: f, total: t, pag, pags }); mostrarAnalise(); }, {
           inicio: doMeio?.grupo || 0,
           parciais: doMeio?.parciais || [],
           aoGuardar: async (grupo, parciais) => {
-            await guardarAnalise(obra.id, { pag, grupo, parciais, pags });
+            await guardarAnalise(obra.id, { pag, grupo, parciais, pags, fila: retomar?.fila || 1 });
             // cada (P) lido já vale para o toque, sem esperar a folha acabar
             await guardarRotulos(obra, pag, parciais);
           },
@@ -1012,7 +1046,7 @@
         // fim da folha: a lista conferida (P17 -> P117, símbolo verde fora) substitui a parcial
         await guardarRotulos(obra, pag, daFolha);
         a.achados += daFolha.length;
-        await guardarAnalise(obra.id, pag < pags ? { pag: pag + 1, grupo: 0, parciais: [], pags } : null);
+        await guardarAnalise(obra.id, pag < pags ? { pag: pag + 1, grupo: 0, parciais: [], pags, fila: retomar?.fila || 1 } : null);
       }
       a.fase = "pronto";
       a.lidos = await contarRotulos(obra);
@@ -1022,18 +1056,26 @@
       console.warn("leitura do projeto:", e);
       Object.assign(a, { fase: "erro", erro: e.message });
       if (/excluída/.test(e.message || "")) await guardarAnalise(obra.id, null);
-      else avisar(`Não deu para ler os (P) da obra ${obra.numero}: ${e.message}`, "erro", 9000);
+      else {
+        falharamAgora.add(obra.id);
+        avisar(`Não deu para ler os (P) da obra ${obra.numero}: ${e.message}`, "erro", 9000);
+      }
     }
     mostrarAnalise();
     manterTelaLigada(false); // a próxima obra da fila (se tiver) liga de novo
-    // outra obra ficou com a leitura pela metade: segue com ela
-    if (a.fase === "pronto") setTimeout(retomarAnalise, 1000);
+    // a próxima obra da fila (ou a que ficou pela metade) começa sozinha
+    setTimeout(retomarAnalise, 1000);
   }
   /** andamento da análise de 0 a 100 (as folhas uma depois da outra) */
   const andamentoAnalise = (a) => Math.min(99, Math.round((((a.pag || 1) - 1) + (a.total ? a.feitos / a.total : 0)) / (a.pags || 1) * 100));
   /** a análise nas outras telas (lista de obras e obra): andamento e o aviso de pronto */
   function faixaAnalise() {
     const a = estado.analise;
+    const fila = (estado.filaAnalise || []).filter((x) => x.id !== a?.obraId || a?.fase !== "pontos");
+    const naFila = fila.length ? `<div class="faixa faixa-fila">⏳ Na fila para ler os (P): ${fila.map((x) => `<b>${esc(x.numero)}</b>`).join(", ")}</div>` : "";
+    return faixaDaAnalise(a) + naFila;
+  }
+  function faixaDaAnalise(a) {
     if (!a) return "";
     if (a.fase === "pontos" || a.fase === "servicos") {
       return `<div class="faixa faixa-analise"><span>🔎 Lendo os (P) da obra <b>${esc(a.numero)}</b>${a.pags > 1 ? ` · folha ${a.pag} de ${a.pags}` : ""} · ${andamentoAnalise(a)}%${travaTela ? " · 🔆 tela ligada até terminar" : ""}</span></div>`;
@@ -2602,7 +2644,7 @@
     irPara(o.projeto && (nova || pn) ? "croqui" : "obra");
     if (mudouNumero) refazerFaixas(o, o.pontos);
     // projeto novo: análise geral (acha os pontos e lê as sugestões de todos)
-    if (pn) setTimeout(async () => { await guardarAnalise(o.id, null); analisarProjeto(o); }, 300);
+    if (pn) setTimeout(() => pedirAnalise(o), 300);
   }
 
   /** `nome` e `croqui` ({ pag, x, y }) quando o ponto nasce de um toque no croqui */
@@ -2962,7 +3004,7 @@
       }
       case "analisar-projeto": // análise geral de novo (obra com projeto anexado antes)
         irPara("croqui");
-        setTimeout(async () => { await guardarAnalise(estado.obra.id, null); analisarProjeto(estado.obra); }, 300);
+        setTimeout(() => pedirAnalise(estado.obra), 300);
         return;
       case "sug-ocultar": // sugestão do projeto que o supervisor não vai usar
       case "sug-mostrar": {
