@@ -1074,16 +1074,16 @@
     }
     const [a, b] = vn.pts;
     estado.cqVaoNovo = null;
-    let v = vaoEntre(o, a.id, b.id);
-    if (!v) {
-      v = { id: novoId(), nome: "", vao: { de: a.id, para: b.id, metros: "", espacadores: "" }, dia: "", obs: "", gps: null, itens: [], fotos: [] };
-      v.nome = nomeDoVao(v);
-      o.pontos.push(v);
-    }
+    // vão novo é sempre outro vão: o que já existe só muda pelo "Remarcar a linha" (antes, o
+    // vão P21–P22 novo redesenhava a linha do vão que já existia com esses postes)
+    const ja = vaoEntre(o, a.id, b.id);
+    const v = { id: novoId(), nome: "", vao: { de: a.id, para: b.id, metros: "", espacadores: "" }, dia: "", obs: "", gps: null, itens: [], fotos: [] };
+    v.nome = nomeDoVao(v);
+    o.pontos.push(v);
     v.vao.linha = [[a.x, a.y], [b.x, b.y]];
     v.croqui = { pag: a.pag, x: arred((a.x + b.x) / 2), y: arred((a.y + b.y) / 2) };
     salvarAgora();
-    avisar(`${v.nome} marcado.`);
+    avisar(ja ? `${v.nome} marcado (é outro vão: o ${ja.nome} que já existia não mudou).` : `${v.nome} marcado.`, ja ? "guardado" : "ok");
     return abrirPonto(v.id);
   }
   /** toque no modo "Ajustar linha": gruda no quadradinho do poste mais perto do toque */
