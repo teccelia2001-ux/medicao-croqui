@@ -123,8 +123,18 @@
     }
     return irPara("ponto", { pontoId: id });
   }
+  /** Modo só fotos (escolhido em cada aparelho, na tela inicial): um aparelho lança os serviços
+   *  e outro, ao mesmo tempo, só tira as fotos dos pontos já criados. O de fotos não muda nada
+   *  da obra nem manda a obra para o banco (senão apagaria o que o outro lançou): manda só as
+   *  fotos, com o ponto no nome do arquivo ("<ponto>__<id>.jpg"). O aparelho que lança junta
+   *  essas fotos no ponto (adotarFotos) e o de fotos traz os pontos novos a cada poucos segundos. */
+  const modoFotos = () => { try { return localStorage.getItem("croqui_modo_fotos") === "sim"; } catch (e) { return false; } };
   /** obra de outro supervisor: abre só para consulta e para gerar a medição */
-  const soLeitura = (o) => o && o.dono === false;
+  const deOutro = (o) => o && o.dono === false;
+  /** nada da obra pode ser mudado aqui: obra de outro supervisor, ou aparelho no modo só fotos */
+  const soLeitura = (o) => o && (o.dono === false || modoFotos());
+  /** foto do modo só fotos leva o ponto no id (é o nome do arquivo no banco) */
+  const idDaFoto = (p) => (modoFotos() ? `${p.id}__${novoId()}` : novoId());
 
   let tempoSalvar = null;
   let vaiSalvar = false; // tem alteração esperando os 400 ms para ser guardada
@@ -137,7 +147,12 @@
     clearTimeout(tempoSalvar);
     vaiSalvar = false;
     // obra nova só existe depois do botão "Criar obra"
-    if (!estado.obra || soLeitura(estado.obra) || !estado.obra.criada_em) return;
+    if (!estado.obra || !estado.obra.criada_em) return;
+    if (modoFotos()) { // só as fotos: a obra fica guardada aqui, mas não sobe (sobem as fotos)
+      try { await Banco.salvarObra(estado.obra, { envio: true }); enviarDepois(); } catch (e) { avisar("Não foi possível guardar no celular. Libere espaço.", "erro"); }
+      return;
+    }
+    if (soLeitura(estado.obra)) return;
     if ((await obrasExcluidas()).has(estado.obra.id)) return;
     try {
       estado.obra.dono = true;
@@ -252,7 +267,16 @@
       }
       const meu = estado.perfil?.user_id;
       const ex = await obrasExcluidas();
-      const obras = (await Banco.listarObras()).filter((o) => o.pendente && o.dono !== false && o.criada_em && (!o.dono_id || o.dono_id === meu) && !ex.has(o.id));
+      if (modoFotos()) {
+        const faltam = (await Banco.todasFotos()).filter((f) => !f.enviada && f.obraId && f.so_fotos);
+        estado.fotosFaltam = faltam.length;
+        for (const id of new Set(faltam.map((f) => f.obraId))) {
+          if (ex.has(id)) continue;
+          await Nuvem.enviarFotos(id);
+        }
+        estado.fotosFaltam = 0;
+      }
+      const obras = modoFotos() ? [] : (await Banco.listarObras()).filter((o) => o.pendente && o.dono !== false && o.criada_em && (!o.dono_id || o.dono_id === meu) && !ex.has(o.id));
       for (const o of obras) {
         try {
           await Nuvem.enviarObra(o, M.totaisObra(o));
@@ -287,7 +311,8 @@
 
   function seloHtml(o) {
     if (!o) return "";
-    if (soLeitura(o)) return `<span class="selo selo-consulta">Consulta</span>`;
+    if (modoFotos()) return `<span class="selo selo-fotos">📷 Só fotos${estado.fotosFaltam ? ` · ⏳ ${estado.fotosFaltam} enviando` : ""}</span>`;
+    if (deOutro(o)) return `<span class="selo selo-consulta">Consulta</span>`;
     if (o.erro_envio) return `<span class="selo selo-erro" title="${esc(o.erro_envio)}">⚠ Não enviada</span>`;
     if (o.pendente) return `<span class="selo selo-pendente">${estado.enviando ? "⟳ Enviando…" : "⏳ Aguardando envio"}</span>`;
     return `<span class="selo selo-ok">✓ No banco</span>`;
@@ -376,9 +401,69 @@
       criada_em: r.criada_em, atualizada_em: r.atualizada_em, pendente: false, enviada_em: r.recebida_em,
       dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null,
     };
+    await juntarFotosDaqui(obra);
     await Banco.salvarObra(obra, { envio: true });
     return obra;
   }
+  /** fotos tiradas aqui no modo só fotos que ainda não estão na obra do banco */
+  async function juntarFotosDaqui(obra) {
+    const minhas = (await Banco.fotosDaObra(obra.id)).filter((f) => f.so_fotos);
+    for (const f of minhas) {
+      const p = obra.pontos.find((x) => x.id === f.pontoId);
+      if (p && !p.fotos.includes(f.id) && !(p.fotos_fora || []).includes(f.id)) p.fotos.push(f.id);
+    }
+  }
+  /** No aparelho que lança: fotos que o aparelho de fotos mandou para o banco e ainda não estão
+   *  no ponto entram nele (e a obra sobe com elas). Devolve quantas entraram. */
+  async function adotarFotos(o) {
+    const lista = await Nuvem.listarFotosInfo(o.id);
+    if (estado.obra !== o) return 0;
+    const ja = new Set(o.pontos.flatMap((p) => [...(p.fotos || []), ...(p.fotos_fora || [])]));
+    let n = 0;
+    for (const f of lista) {
+      const i = f.id.indexOf("__");
+      if (i < 1 || ja.has(f.id)) continue;
+      const p = o.pontos.find((x) => x.id === f.id.slice(0, i));
+      if (!p) continue; // ponto excluído aqui: a foto fica só no banco
+      p.fotos.push(f.id);
+      (o.fotos_info ||= {})[f.id] = { pontoId: p.id, criada_em: f.criada_em };
+      ja.add(f.id);
+      n++;
+    }
+    return n;
+  }
+  const digitando = () => !!document.activeElement?.matches?.("input, textarea, select");
+  const comCamera = () => document.body.classList.contains("com-camera");
+  // os dois aparelhos ao mesmo tempo: o de fotos traz os pontos novos e o que lança junta as fotos
+  let olhandoObra = false;
+  setInterval(async () => {
+    const o = estado.obra;
+    if (olhandoObra || !o || !o.criada_em || document.visibilityState !== "visible" || !navigator.onLine || !Nuvem.lerSessao()) return;
+    olhandoObra = true;
+    try {
+      if (modoFotos()) {
+        const versao = await Nuvem.versaoObra(o.id);
+        if (!versao || new Date(versao) <= new Date(o.atualizada_em) || estado.obra !== o || comCamera()) return;
+        const nova = await trazerObra(o.id);
+        if (estado.obra !== o || comCamera()) return;
+        estado.obra = nova;
+        if (estado.foto) estado.foto = null;
+        render();
+      } else if (!soLeitura(o)) {
+        if ((adotarFotos.em || 0) > Date.now() - 9000) return; // a cada ~10 s
+        adotarFotos.em = Date.now();
+        const n = await adotarFotos(o);
+        if (!n || estado.obra !== o) return;
+        salvarAgora();
+        avisar(`📷 ${plural(n, "foto chegou", "fotos chegaram")} do aparelho de fotos.`, "guardado");
+        if (!digitando() && !comCamera()) render();
+      }
+    } catch (e) {
+      console.warn("obra aberta nos dois aparelhos:", e);
+    } finally {
+      olhandoObra = false;
+    }
+  }, 4000);
 
   // ------------------------------------------------------------------ render
   // tela que estava desenhada: refazendo a mesma (lançou um serviço, abriu a quantidade...)
@@ -591,7 +676,7 @@
       return {
         id: o.id, numero: o.numero, cidade: o.municipio || o.local || "", total: t.valor,
         pontos: M.pontosReais(o.pontos).length, fotos: o.pontos.reduce((n, p) => n + p.fotos.length, 0), croqui: !!o.projeto,
-        atualizada_em: o.atualizada_em, supervisor: soLeitura(o) ? o.supervisor_nome || r?.supervisor_nome : estado.perfil?.nome,
+        atualizada_em: o.atualizada_em, supervisor: deOutro(o) ? o.supervisor_nome || r?.supervisor_nome : estado.perfil?.nome,
         selo: seloHtml(o), meu: !soLeitura(o),
       };
     });
@@ -626,7 +711,8 @@
   }
 
   function telaInicio() {
-    const pendentes = estado.obras.filter((o) => o.pendente && !soLeitura(o)).length;
+    const pendentes = estado.obras.filter((o) => o.pendente && !deOutro(o)).length;
+    const mf = modoFotos();
     const termos = normalizar(estado.filtroObra || "").split(/\s+/).filter(Boolean);
     const todas = obrasDaLista();
     const vistas = termos.length
@@ -645,7 +731,12 @@
           : `<div class="faixa faixa-ok">✓ Tudo salvo no banco</div>`}
       ${estado.espacoApertado ? `<div class="erro">Espaço do celular quase cheio para o app. Libere espaço no celular apagando outros arquivos ou aplicativos (as fotos do app ficam guardadas).</div>` : ""}
       <div id="faixa-analise">${faixaAnalise()}</div>
-      <button type="button" class="botao botao-grande" data-acao="nova-obra">+ Nova obra</button>
+      <div class="modo-aparelho" role="group" aria-label="Uso deste aparelho">
+        <button type="button" class="${mf ? "" : "ativo"}" data-acao="modo-fotos" data-modo="nao" aria-pressed="${!mf}">✏️ Lançar serviços</button>
+        <button type="button" class="${mf ? "ativo" : ""}" data-acao="modo-fotos" data-modo="sim" aria-pressed="${mf}">📷 Só fotos</button>
+      </div>
+      ${mf ? `<div class="faixa faixa-fotos">📷 <b>Modo só fotos neste aparelho.</b> Abra a obra, toque num ponto já criado e tire as fotos. Os pontos lançados no outro aparelho aparecem sozinhos em poucos segundos. Aqui não dá para mudar nada do que foi lançado.</div>`
+        : `<button type="button" class="botao botao-grande" data-acao="nova-obra">+ Nova obra</button>`}
       ${instalarHtml()}
       <section class="bloco">
         <div class="linha-topo"><h2>Obras ${todas.length ? `<small class="sub-inline">(${todas.length})</small>` : ""}</h2>
@@ -789,7 +880,8 @@
       ${topo("Obra", "inicio", soLeitura(o) ? "" : `<button type="button" class="link" data-acao="editar-obra">Editar</button>`)}
       <div id="faixa-analise">${faixaAnalise()}</div>
       <div class="linha-topo"><span id="selo-obra">${seloHtml(o)}</span>${o.enviada_em ? `<small class="sub">no banco desde ${M.fmtHora(o.enviada_em)}</small>` : ""}</div>
-      ${soLeitura(o) ? `<div class="faixa faixa-consulta">Obra de ${esc(o.supervisor_nome || "outro supervisor")}: aberta só para consulta e para gerar a medição.</div>` : ""}
+      ${modoFotos() ? `<div class="faixa faixa-fotos">📷 Modo só fotos: toque num ponto para tirar as fotos dele.</div>`
+        : deOutro(o) ? `<div class="faixa faixa-consulta">Obra de ${esc(o.supervisor_nome || "outro supervisor")}: aberta só para consulta e para gerar a medição.</div>` : ""}
       ${o.erro_envio ? `<div class="erro">O banco recusou o envio: ${esc(o.erro_envio)}</div>` : ""}
       <div class="chips">
         <span class="chip-obra"><small>OBRA</small><b>${esc(o.numero)}</b></span>
@@ -798,7 +890,7 @@
         <span class="chip"><b>${reais.length}</b> ${reais.length === 1 ? "ponto" : "pontos"}</span>
       </div>
       ${o.local || o.municipio || o.equipe ? `<p class="sub">${esc([o.local, o.municipio, o.equipe].filter(Boolean).join(" · "))}</p>` : ""}
-      ${o.projeto ? `<button type="button" class="botao botao-grande" data-acao="croqui">🗺 Abrir o croqui <small>${soLeitura(o) ? "toque num ponto para ver o que foi feito" : "toque no poste para lançar os serviços"}</small></button>`
+      ${o.projeto ? `<button type="button" class="botao botao-grande" data-acao="croqui">🗺 Abrir o croqui <small>${modoFotos() ? "toque num ponto para tirar as fotos" : soLeitura(o) ? "toque num ponto para ver o que foi feito" : "toque no poste para lançar os serviços"}</small></button>`
         : soLeitura(o) ? "" : `<div class="cartao dados sem-projeto"><b>Medir pelo croqui</b><p class="sub">Anexe o projeto da obra (PDF ou foto) para tocar no poste e lançar ali os serviços.</p>
           <button type="button" class="botao" data-acao="editar-obra">📎 Anexar o projeto</button></div>`}
       ${o.projeto && !soLeitura(o) ? `<button type="button" class="botao botao-claro botao-pequeno" data-acao="analisar-projeto" ${estado.analise?.obraId === o.id && /pontos|servicos/.test(estado.analise.fase) ? "disabled" : ""}>🔎 Achar todos os pontos (P) do projeto</button>` : ""}
@@ -1412,7 +1504,7 @@
     return `<div class="pagina-croqui${painel ? " com-painel" : ""}">
       <header class="cq-topo">
         <button type="button" class="voltar" data-acao="inicio">‹ Obras</button>
-        <div class="cq-titulo"><b>Obra ${esc(o.numero)}</b><small>${plural(marcados, "ponto", "pontos")} no croqui${soLeitura(o) ? " · consulta" : ""}</small></div>
+        <div class="cq-titulo"><b>Obra ${esc(o.numero)}</b><small>${plural(marcados, "ponto", "pontos")} no croqui${modoFotos() ? " · só fotos" : soLeitura(o) ? " · consulta" : ""}</small></div>
         <button type="button" class="link cq-lista" data-acao="obra">☰ Pontos</button>
       </header>
       <div class="cq-area" id="cq-area">
@@ -1462,11 +1554,12 @@
         ${secoes || `<p class="vazio">Nenhum serviço lançado neste ponto ainda.</p>`}
       </div>
       ${fotos ? `<div class="cq-fotos" aria-label="Fotos do ponto">${fotos}</div>` : ""}
-      <div class="dupla">
+      ${modoFotos() ? `<button type="button" class="botao" data-acao="cq-camera" data-id="${p.id}">📷 Tirar foto do ${esc(p.nome)}</button>
+      <button type="button" class="botao botao-claro" data-acao="abrir-ponto" data-id="${p.id}">Ver o ponto e as fotos</button>` : `<div class="dupla">
         <button type="button" class="botao" data-acao="abrir-ponto" data-id="${p.id}">${soLeitura(o) ? "Abrir o ponto" : "✏️ Lançar serviços e fotos"}</button>
         ${soLeitura(o) ? "" : p.vao ? `<button type="button" class="botao botao-claro" data-acao="cq-ajustar-vao" data-id="${p.id}">↔ Ajustar linha</button>`
           : `<button type="button" class="botao botao-claro" data-acao="cq-mover" data-id="${p.id}">${p.croqui ? "↔ Mudar lugar" : "📌 Marcar no croqui"}</button>`}
-      </div>
+      </div>`}
       ${soLeitura(o) ? "" : `<div class="cq-so-fotos">
         <button type="button" class="botao botao-claro" data-acao="cq-camera" data-id="${p.id}">📷 Tirar foto</button>
       </div>`}
@@ -1636,7 +1729,7 @@
     if (estado.cqPainel) { estado.cqPainel = null; estado.cqSel = null; salvarAgora(); }
     // com o resumo de um ponto (ou uma anotação) aberto, o primeiro toque fora só fecha
     if (estado.cqSel || estado.cqNota) { estado.cqSel = null; estado.cqNota = null; return render(); }
-    if (soLeitura(o)) return;
+    if (soLeitura(o)) return modoFotos() ? avisar("Modo só fotos: toque num ponto já criado para tirar as fotos.", "guardado") : undefined;
     const antes = estado.cqNovo;
     const n = { pag: estado.cqPag, x: arred(pos.x), y: arred(pos.y), nome: antes?.editado ? antes.nome : proximoNome(o), editado: !!antes?.editado };
     // o vão não é mais adivinhado pelo toque na linha: o supervisor marca o poste inicial e o final
@@ -2254,7 +2347,7 @@
         <div class="linha-topo"><b>${p.geral ? "Fotos" : "Fotos do ponto"}</b><small class="sub">${plural(p.fotos.length, "foto", "fotos")}</small></div>
         ${fotos ? `<div class="fotos">${fotos}</div>
         <button type="button" class="link link-galeria" data-acao="fotos-galeria">💾 Salvar ${p.fotos.length === 1 ? "a foto" : `as ${p.fotos.length} fotos`} no celular</button>` : ""}
-        <div class="dupla" ${soLeitura(o) ? "hidden" : ""}>
+        <div class="dupla" ${soLeitura(o) && !modoFotos() ? "hidden" : ""}>
           <button type="button" class="botao" data-acao="camera">📷 Tirar foto</button>
           <input type="file" accept="image/*" capture="environment" data-acao="foto" data-origem="camera" hidden>
           <label class="botao botao-claro">🖼 Galeria<input type="file" accept="image/*" multiple data-acao="foto" data-origem="galeria" hidden></label>
@@ -2768,7 +2861,7 @@
       fila = fila.then(async () => {
         try {
           const pronta = await carimbarCanvas(cv, 0.8, linhasCarimbo(o, p, quando));
-          const foto = { id: novoId(), obraId: o.id, pontoId: p.id, gps: p.gps || null, ...pronta, criada_em: quando.toISOString(), origem: "camera", na_galeria: false };
+          const foto = { id: idDaFoto(p), obraId: o.id, pontoId: p.id, gps: p.gps || null, ...pronta, criada_em: quando.toISOString(), origem: "camera", na_galeria: false, so_fotos: modoFotos() };
           await Banco.salvarFoto(foto);
           p.fotos.push(foto.id);
           const url = URL.createObjectURL(foto.blob);
@@ -2859,7 +2952,7 @@
         const { copia, ...pronta } = await prepararFoto(a, o, p, { copia: copiar });
         // a cópia sai na hora, antes de guardar, para o celular já ir salvando
         if (copia) baixar(copia, nomeFoto(o, p, pronta.criada_em, ok));
-        const foto = { id: novoId(), obraId: o.id, pontoId: p.id, gps: p.gps || null, ...pronta, origem, na_galeria: origem === "galeria" || !!copia };
+        const foto = { id: idDaFoto(p), obraId: o.id, pontoId: p.id, gps: p.gps || null, ...pronta, origem, na_galeria: origem === "galeria" || !!copia, so_fotos: modoFotos() };
         await Banco.salvarFoto(foto);
         p.fotos.push(foto.id);
         estado.miniaturas.set(foto.id, URL.createObjectURL(foto.blob));
@@ -3014,7 +3107,7 @@
         for (const id of o.pontos.flatMap((p) => p.fotos)) if (!(await fotoLocal(o, id))) faltando++;
         if (faltando) avisar(`${plural(faltando, "foto não pôde ser baixada", "fotos não puderam ser baixadas")}: o PDF sai sem elas.`, "erro");
       }
-      const supervisor = soLeitura(o) ? o.supervisor_nome || "" : estado.perfil?.nome || "";
+      const supervisor = deOutro(o) ? o.supervisor_nome || "" : estado.perfil?.nome || "";
       // PDF: folha do croqui com os pontos e, com fotos, o pedaço do croqui de cada ponto
       let croqui = null;
       if (tipo !== "xlsx" && o.projeto) {
@@ -3178,6 +3271,20 @@
         if (!v?.vao || !o.projeto) return;
         const a = pontoPorId(v.vao.de)?.croqui;
         return irPara("croqui", { cqAjuste: { id: v.id, pts: [] }, cqSel: null, cqNovo: null, cqCentrar: v.id, cqPag: a?.pag || estado.cqPag });
+      }
+      case "modo-fotos": {
+        const sim = alvo.dataset.modo === "sim";
+        if (sim === modoFotos()) return;
+        if (sim) {
+          const contar = async () => (await Banco.listarObras()).filter((x) => x.pendente && !deOutro(x)).length;
+          let pend = await contar();
+          if (pend && navigator.onLine) { avisar("Enviando o que falta deste aparelho…", "guardado"); await enviarPendentes(); pend = await contar(); }
+          if (pend) return avisar(`Espere enviar ${plural(pend, "obra", "obras")} deste aparelho ao banco antes de usar o modo só fotos.`, "erro");
+        }
+        try { localStorage.setItem("croqui_modo_fotos", sim ? "sim" : "nao"); } catch (e) { return avisar("Não foi possível guardar a escolha.", "erro"); }
+        avisar(sim ? "📷 Modo só fotos ligado neste aparelho." : "✏️ Este aparelho volta a lançar os serviços.");
+        if (!sim) buscarRemotas(); // traz a obra como está no banco
+        return render();
       }
       case "cq-nota-ponto": { // ponto novo em cima da anotação (a anotação continua lá)
         const n = estado.cqNota;
@@ -3519,6 +3626,7 @@
         if (soLeitura(o) || !confirm("Tirar esta foto do ponto? Ela sai da medição, mas continua guardada no celular e no banco.")) return;
         const p = ponto();
         p.fotos = p.fotos.filter((id) => id !== estado.foto.id);
+        if (String(estado.foto.id).includes("__")) (p.fotos_fora ||= []).push(estado.foto.id);
         estado.foto = null;
         await salvarAgora();
         return render();
@@ -3822,7 +3930,7 @@
     if (!forcado) {
       await salvarAgora();
       await enviarPendentes();
-      const pend = (await Banco.listarObras()).filter((o) => o.pendente && !soLeitura(o)).length;
+      const pend = (await Banco.listarObras()).filter((o) => o.pendente && !deOutro(o)).length;
       if (pend) {
         alert(`${plural(pend, "obra ainda não subiu", "obras ainda não subiram")} para o banco. Fique com internet até aparecer "Tudo salvo no banco" e saia depois.`);
         return;

@@ -157,6 +157,13 @@
   // sem cache do navegador: a foto com a faixa refeita fica no mesmo endereço da antiga
   const baixarFoto = async (obraId, fotoId) =>
     (await chamar(`/storage/v1/object/authenticated/medicao-croqui/${caminhoFoto(obraId, fotoId)}`, { bruto: true, cache: "no-store" })).blob();
+  /** quando a obra mudou no banco (leve: só a data), para os dois aparelhos ao mesmo tempo */
+  const versaoObra = async (id) => (await chamar(`/rest/v1/medicao_croqui_obras?id=eq.${id}&select=atualizada_em`, { cache: "no-store" }))[0]?.atualizada_em || null;
+  /** fotos da obra no banco, com a data de chegada (as do modo só fotos têm o ponto no nome) */
+  const listarFotosInfo = async (obraId) =>
+    (await chamar("/storage/v1/object/list/medicao-croqui", { metodo: "POST", corpo: { prefix: `${obraId}/`, limit: 1000 } }))
+      .filter((o) => /\.jpg$/.test(o.name))
+      .map((o) => ({ id: o.name.replace(/\.jpg$/, ""), criada_em: o.created_at || null }));
   const listarFotos = async (obraId) =>
     (await chamar("/storage/v1/object/list/medicao-croqui", { metodo: "POST", corpo: { prefix: `${obraId}/`, limit: 1000 } }))
       .map((o) => o.name.replace(/\.jpg$/, ""));
@@ -227,6 +234,6 @@
 
   window.Nuvem = {
     configurada, ErroNuvem, lerSessao, entrar, sair, meuPerfil, catalogo, supervisores, alterarSupervisor, criarUsuario, trocarSenha,
-    listarObras, baixarObra, apagarObra, enviarObra, enviarFotos, baixarFoto, listarFotos, enviarProjeto, baixarProjeto,
+    listarObras, baixarObra, apagarObra, enviarObra, enviarFotos, baixarFoto, listarFotos, listarFotosInfo, versaoObra, enviarProjeto, baixarProjeto,
   };
 })();
