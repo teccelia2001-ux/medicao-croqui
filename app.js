@@ -58,6 +58,7 @@
     cqSel: null, // ponto escolhido no croqui (mostra o que foi feito nele)
     cqNovo: null, // toque num lugar vazio: { pag, x, y, nome } (pergunta se cria o ponto ali)
     cqMover: null, // id do ponto que vai para o próximo lugar tocado
+    cqMoverNota: null, // id da anotação que vai para o próximo lugar tocado
     cqCentrar: null, // id do ponto para pôr no meio da tela ao abrir
     projetoNovo: null, // arquivo escolhido na tela da obra: { blob, nome, tipo }
     ordemPontos: (() => { try { return localStorage.getItem("croqui_ordem_pontos") === "decr" ? "decr" : "cresc"; } catch (e) { return "cresc"; } })(),
@@ -171,7 +172,7 @@
     await salvarAgora();
     // outro ponto (ou outra tela): a pesquisa dos serviços lançados começa limpa
     if (tela !== "ponto" || extra.pontoId !== estado.pontoId) estado.filtroItens = "";
-    if (tela !== "croqui") { estado.cqNovo = null; estado.cqNota = null; estado.cqDesenho = false; estado.cqAjuste = null; estado.cqPainel = null; estado.cqVaoNovo = null; if (!("cqMover" in extra)) estado.cqMover = null; }
+    if (tela !== "croqui") { estado.cqNovo = null; estado.cqNota = null; estado.cqDesenho = false; estado.cqAjuste = null; estado.cqPainel = null; estado.cqVaoNovo = null; estado.cqMoverNota = null; if (!("cqMover" in extra)) estado.cqMover = null; }
     Object.assign(estado, { tela, busca: "", escolhido: null, qtd: "", arquivo: null }, extra);
     if (tela !== "obra-form") estado.projetoNovo = null;
     if (tela === "inicio") {
@@ -387,7 +388,7 @@
     const o = estado.obra;
     if (!o || vaiSalvar || o.pendente) return false;
     if (document.activeElement?.matches?.("input, textarea, select")) return false;
-    return !(estado.escolhido || estado.cqNovo || estado.cqNota || estado.cqAjuste || estado.cqVaoNovo || estado.cqDesenho || estado.cqMover || estado.gerando);
+    return !(estado.escolhido || estado.cqNovo || estado.cqNota || estado.cqAjuste || estado.cqVaoNovo || estado.cqDesenho || estado.cqMover || estado.cqMoverNota || estado.gerando);
   }
 
   async function trazerObra(id) {
@@ -1479,7 +1480,7 @@
     if (estado.tela !== "croqui" || !o) return;
     const html = analiseHtml(o);
     if (el) el.outerHTML = html || "";
-    else if (html && !estado.cqNovo && !estado.cqSel && !estado.cqMover) document.getElementById("cq-area")?.insertAdjacentHTML("afterbegin", html);
+    else if (html && !estado.cqNovo && !estado.cqSel && !estado.cqMover && !estado.cqMoverNota) document.getElementById("cq-area")?.insertAdjacentHTML("afterbegin", html);
   }
 
   /** A troca de folha fica logo acima do que cobre o pé do croqui (a barra do total ou o
@@ -1518,6 +1519,7 @@
     const dica = vn ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no ${vn.pts.length ? `<b>fim</b> do vão (de ${esc(vn.pts[0].id ? nomeDoPoste(vn.pts[0].id) : "ponta livre")})` : "<b>início</b> do vão"}: no poste ou, fora dele, onde a linha vai</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : vAj ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste ${aj.pts.length ? `de fim (<b>${esc(pontaDoVao(vAj, "para"))}</b>)` : `de início (<b>${esc(pontaDoVao(vAj, "de"))}</b>)`}, no quadradinho preto</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : estado.cqDesenho ? `<div class="cq-dica cq-dica-rascunho"><span>✏️ Rascunho: desenhe com um dedo · dois dedos movem</span><button type="button" class="link" data-acao="cq-desfazer">↶ Desfazer</button><button type="button" class="link" data-acao="cq-rascunho">Pronto</button></div>`
+      : estado.cqMoverNota ? `<div class="cq-dica cq-dica-mover"><span>📝 Toque no croqui onde fica a <b>anotação</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : estado.cqNovo || sel || estado.cqNota ? "" : mover ? `<div class="cq-dica cq-dica-mover"><span>📌 Toque no croqui onde fica o <b>${esc(mover.nome)}</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : !o.projeto ? ""
         : soLeitura(o) ? (marcados ? "" : `<div class="cq-dica">Nenhum ponto marcado no croqui.</div>`)
@@ -1640,7 +1642,10 @@
         <button type="button" class="botao botao-claro" data-acao="cq-nota-fechar">Cancelar</button>
         <button type="button" class="botao" data-acao="cq-nota-salvar">Salvar anotação</button>
       </div>
-      ${n.id ? `<button type="button" class="botao botao-claro" data-acao="cq-nota-ponto">📍 Criar ponto aqui</button>
+      ${n.id ? `<div class="dupla">
+        <button type="button" class="botao botao-claro" data-acao="cq-nota-mover">↔ Mudar lugar</button>
+        <button type="button" class="botao botao-claro" data-acao="cq-nota-ponto">📍 Criar ponto aqui</button>
+      </div>
       <button type="button" class="link cq-excluir" data-acao="cq-nota-excluir">🗑 Excluir anotação</button>` : ""}`}
     </div>`;
   }
@@ -1671,7 +1676,7 @@
     for (const n of an.notas || []) {
       if (n.pag !== pag) continue;
       const t = n.texto.length > 70 ? n.texto.slice(0, 67) + "…" : n.texto;
-      lista.push({ id: `nota:${n.id}`, nome: t, x: n.x, y: n.y, classe: `cq-nota${estado.cqNota?.id === n.id ? " cq-nota-sel" : ""}` });
+      lista.push({ id: `nota:${n.id}`, nome: t, x: n.x, y: n.y, classe: `cq-nota${estado.cqNota?.id === n.id ? " cq-nota-sel" : ""}${estado.cqMoverNota === n.id ? " cq-movendo" : ""}` });
     }
     visor.marcas(lista);
     visor.camada({ linhas, tracos: (an.tracos || []).filter((t) => t.pag === pag).map((t) => ({ pts: t.pts })) });
@@ -1739,6 +1744,16 @@
   function tocouVazio(pos) {
     if (estado.tela !== "croqui") return;
     const o = estado.obra;
+    if (estado.cqMoverNota) { // a anotação vai para onde tocou
+      const nt = (o.anotacoes?.notas || []).find((x) => x.id === estado.cqMoverNota);
+      estado.cqMoverNota = null;
+      if (nt) {
+        Object.assign(nt, { pag: estado.cqPag, x: arred(pos.x), y: arred(pos.y) });
+        salvarAgora();
+        avisar("Anotação mudada de lugar.");
+      }
+      return render();
+    }
     const mover = pontoPorId(estado.cqMover);
     if (mover) {
       mover.croqui = { pag: estado.cqPag, x: arred(pos.x), y: arred(pos.y) };
@@ -1813,6 +1828,7 @@
     // vão, tocar nela vale como tocar no lugar dela
     const nota = String(id).startsWith("nota:") ? (estado.obra.anotacoes?.notas || []).find((x) => `nota:${x.id}` === id) : null;
     if (nota && (estado.cqMover || estado.cqVaoNovo)) return tocouVazio({ x: nota.x, y: nota.y });
+    if (estado.cqMoverNota) { const q = nota || pontoPorId(id)?.croqui; return q ? tocouVazio({ x: q.x, y: q.y }) : undefined; }
     if (estado.cqMover) return avisar("Toque num lugar vazio do croqui.", "guardado");
     if (estado.cqAjuste) return avisar("Toque no quadradinho preto do poste, fora dos nomes.", "guardado");
     if (estado.cqVaoNovo) { // tocou na marca de um ponto: é esse poste
@@ -3289,6 +3305,7 @@
       case "cq-cancelar":
         estado.cqNovo = null;
         estado.cqMover = null;
+        estado.cqMoverNota = null;
         if (estado.cqAjuste) { estado.cqSel = estado.cqAjuste.id; estado.cqAjuste = null; }
         estado.cqVaoNovo = null;
         return render();
@@ -3310,6 +3327,14 @@
         try { localStorage.setItem("croqui_modo_fotos", sim ? "sim" : "nao"); } catch (e) { return avisar("Não foi possível guardar a escolha.", "erro"); }
         avisar(sim ? "📷 Modo só fotos ligado neste aparelho." : "✏️ Este aparelho volta a lançar os serviços.");
         if (!sim) buscarRemotas(); // traz a obra como está no banco
+        return render();
+      }
+      case "cq-nota-mover": { // a anotação muda de lugar: o próximo toque no croqui é onde ela fica
+        const n = estado.cqNota;
+        if (!n?.id) return;
+        const ja = (anotacoes(o).notas || []).find((x) => x.id === n.id);
+        if (ja && (n.texto || "").trim() && ja.texto !== n.texto.trim()) { ja.texto = n.texto.trim(); salvarAgora(); } // o que mudou no texto fica
+        Object.assign(estado, { cqMoverNota: n.id, cqNota: null, cqSel: null, cqNovo: null });
         return render();
       }
       case "cq-nota-ponto": { // ponto novo em cima da anotação (a anotação continua lá)

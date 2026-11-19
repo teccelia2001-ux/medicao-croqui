@@ -1048,12 +1048,13 @@
     const visto = new Uint8Array(N), pilha = [], achados = [];
     for (let s0 = 0; s0 < N; s0++) {
       if (!preto[s0] || visto[s0]) continue;
-      let x0 = w, y0 = h, x1 = 0, y1 = 0, n = 0;
+      let x0 = w, y0 = h, x1 = 0, y1 = 0, n = 0, quente = 0;
       visto[s0] = 1;
       pilha.push(s0);
       while (pilha.length) {
         const k = pilha.pop(), x = k % w, y = (k / w) | 0;
         n++;
+        quente += d[k * 4] - d[k * 4 + 1]; // marrom: mais vermelho que verde (o fundo oliva e o preto, não)
         if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
         if (x > 0 && preto[k - 1] && !visto[k - 1]) { visto[k - 1] = 1; pilha.push(k - 1); }
         if (x < w - 1 && preto[k + 1] && !visto[k + 1]) { visto[k + 1] = 1; pilha.push(k + 1); }
@@ -1073,11 +1074,13 @@
         vazado = lin(y0, Math.min(y1, y0 + 1)) > 0.8 && lin(y1, Math.max(y0, y1 - 1)) > 0.8 && col(x0, Math.min(x1, x0 + 1)) > 0.8 && col(x1, Math.max(x0, x1 - 1)) > 0.8;
       }
       if (!cheio && !vazado) continue;
+      // tronco de árvore: marrom bem escuro (o poste é preto neutro)
+      if (quente / n > 8) continue;
       // tronco de árvore (escuro e cheio como o poste): tem a copa verde em volta. Fica de fora
       {
-        const m = Math.max(bw, bh) * 1.6;
+        const m = Math.max(bw, bh) * 2;
         const ax = Math.max(0, Math.floor(x0 - m)), bx = Math.min(w - 1, Math.ceil(x1 + m));
-        const ay = Math.max(0, Math.floor(y0 - m * 1.4)), by = Math.min(h - 1, Math.ceil(y1 + m * 0.6));
+        const ay = Math.max(0, Math.floor(y0 - m * 1.6)), by = Math.min(h - 1, Math.ceil(y1 + m * 0.5));
         let verde = 0, total = 0;
         for (let yy = ay; yy <= by; yy += 2) {
           for (let xx = ax; xx <= bx; xx += 2) {
