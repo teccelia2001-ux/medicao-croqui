@@ -1801,11 +1801,8 @@
     // já emenda a leitura dos serviços deste lugar: ao criar o ponto as sugestões estão prontas
     if (o?.projeto && !soLeitura(o) && sugestaoLigada()) lerSugestoes(o, { pag: n.pag, x: n.x, y: n.y }, achou?.nome || n.nome);
     if (estado.cqNovo !== n || estado.obra !== o) return;
-    if (achou && !n.editado) {
-      // o mesmo (P1) já marcado em outra folha (outro croqui da obra): este é o "P1-F2"
-      const outro = M.pontosReais(o.pontos).find((p) => p.nome.trim().toUpperCase() === achou.nome && p.croqui && (p.croqui.pag || 1) !== n.pag);
-      n.nome = outro ? `${achou.nome}-F${n.pag}` : achou.nome;
-    }
+    // o nome é só o (P) verde lido, como está no projeto (sem "-F1" da folha: pedido 19/11/2026)
+    if (achou && !n.editado) n.nome = achou.nome;
     // digitando: não refaz a tela (o teclado fecharia), só troca o aviso
     if (n.editado) {
       const aviso = document.getElementById("cq-lido");
