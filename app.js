@@ -1031,14 +1031,30 @@
       if (d < 0.2 && (!rot || d < rot.d)) rot = { ...x, d };
     }
     const doRotulo = rot && postes(o).find((p) => p.nome.trim().toUpperCase() === rot.nome && p.id !== evitar);
-    if (doRotulo) return doRotulo;
     let melhor = null;
     for (const p of postes(o)) {
       if (!p.croqui || (p.croqui.pag || 1) !== pos.pag || p.id === evitar) continue;
       const d = Math.hypot(p.croqui.x - pos.x, (p.croqui.y - pos.y) * k);
       if (d < 0.1 && (!melhor || d < melhor.d)) melhor = { p, d };
     }
-    return melhor?.p || null;
+    // candidatos, do mais provável ao menos: o do (P) lido perto e o ponto mais perto
+    return [doRotulo && { p: doRotulo, em: { x: rot.x, y: rot.y } }, melhor && { p: melhor.p, em: melhor.p.croqui }].filter(Boolean);
+  }
+  /** O ponto (no lugar `em`: o (P) dele) é do poste `simb` que foi tocado? É, se nenhum outro
+   *  símbolo de poste fica bem mais perto do (P). Poste existente sem (P) no projeto (DT10/300
+   *  ao lado de outro poste) não pega mais o ponto do vizinho. */
+  async function ehDoPoste(proj, em, simb, pag) {
+    const k = visor?.W ? (visor.giro % 180 ? visor.W / visor.H : visor.H / visor.W) : 1.3;
+    const dist = (a, b) => Math.hypot(a.x - b.x, (a.y - b.y) * k);
+    const dS = dist(em, simb);
+    if (dS < 0.012) return true;
+    try {
+      const { postes: perto } = await Croqui.postesPerto(proj, { pag, x: em.x, y: em.y }, Math.min(0.44, dS * 2.6 + 0.02), 1400);
+      const dMin = Math.min(...perto.map((q) => dist(em, q)));
+      return !perto.length || dS <= dMin * 1.3 + 0.004;
+    } catch (e) {
+      return true;
+    }
   }
   /** Modo "marcar vão": cada toque é uma ponta (gruda no quadradinho do poste). Com as duas, o vão
    *  nasce (ou é refeito) com a linha exata entre elas e abre para a metragem. */
@@ -1047,16 +1063,26 @@
     if (!vn || !o) return;
     if (vn.ocupado) { vn.proximo = [pos, posteId]; return; } // tocou de novo antes de acabar: vem logo depois
     vn.ocupado = true;
-    let q = pos;
+    let q = pos, simb = null, proj = null;
     try {
-      const proj = await garantirProjeto(o);
-      q = (proj && (await Croqui.acharPosteSimbolo(proj, pos, posteId ? 0.06 : 0.035))) || pos;
+      proj = await garantirProjeto(o);
+      simb = proj && (await Croqui.acharPosteSimbolo(proj, pos, posteId ? 0.06 : 0.035));
+      q = simb || pos;
     } catch (e) {
       console.warn("poste perto do toque:", e);
     }
     // o poste inicial não conta para o fim (o P5.1 perto "pegava" o toque no poste do P7)
     const ini = vn.pts[0]?.id || null;
-    const poste = (posteId && pontoPorId(posteId)) || postePerto(o, { ...q, pag: pos.pag }, ini) || postePerto(o, pos, ini) || (await posteExistente(o, pos, ini));
+    let poste = posteId && pontoPorId(posteId);
+    if (!poste) {
+      const cands = [];
+      for (const c of [postePerto(o, { ...q, pag: pos.pag }, ini), postePerto(o, pos, ini)]) if (c) cands.push({ p: c, em: c.croqui });
+      cands.push(...(await posteExistente(o, pos, ini)));
+      for (const c of cands) {
+        // tocou num símbolo de poste: o ponto tem de ser dele (não do poste vizinho)
+        if (!simb || !proj || !c.em || (await ehDoPoste(proj, c.em, simb, pos.pag))) { poste = c.p; break; }
+      }
+    }
     vn.ocupado = false;
     if (estado.cqVaoNovo !== vn) return;
     // sem ponto aqui: a ponta fica livre (fora do poste), sem criar ponto

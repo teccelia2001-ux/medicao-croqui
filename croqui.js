@@ -1062,7 +1062,17 @@
       }
       const bw = x1 - x0 + 1, bh = y1 - y0 + 1, lado = Math.max(bw, bh) / escala; // lado em pontos
       // quadrado cheio de 2 a 20 pontos (as letras pretas são finas: enchem pouco a caixa)
-      if (Math.max(bw, bh) < 7 || lado < 1.5 || lado > 20 || bw / bh < 0.5 || bw / bh > 2 || n / (bw * bh) < 0.55) continue;
+      const cheio = !(Math.max(bw, bh) < 7 || lado < 1.5 || lado > 20 || bw / bh < 0.5 || bw / bh > 2 || n / (bw * bh) < 0.55);
+      // poste existente: caixinha vazada (□ ou □□, só o contorno preto), de 3 a 20 pontos. As
+      // letras redondas (O, D, 0) não fecham os quatro lados retos da caixa
+      let vazado = false;
+      if (!cheio && Math.max(bw, bh) >= 9 && lado >= 3 && lado <= 20 && bw / bh >= 0.4 && bw / bh <= 2.6 && n / (bw * bh) < 0.6) {
+        const escuro = (x, y) => preto[y * w + x] === 1;
+        const lin = (y, y2) => { let c = 0; for (let x = x0; x <= x1; x++) if (escuro(x, y) || escuro(x, y2)) c++; return c / bw; };
+        const col = (x, x2) => { let c = 0; for (let y = y0; y <= y1; y++) if (escuro(x, y) || escuro(x2, y)) c++; return c / bh; };
+        vazado = lin(y0, Math.min(y1, y0 + 1)) > 0.8 && lin(y1, Math.max(y0, y1 - 1)) > 0.8 && col(x0, Math.min(x1, x0 + 1)) > 0.8 && col(x1, Math.max(x0, x1 - 1)) > 0.8;
+      }
+      if (!cheio && !vazado) continue;
       // tronco de árvore (escuro e cheio como o poste): tem a copa verde em volta. Fica de fora
       {
         const m = Math.max(bw, bh) * 1.6;
@@ -1082,6 +1092,7 @@
       achados.push({
         x: Math.round((pos.x + (cx - w / 2) / escala / f.W) * 1e5) / 1e5,
         y: Math.round((pos.y + (cy - h / 2) / escala / f.H) * 1e5) / 1e5,
+        ...(vazado ? { vazado: true } : {}),
       });
     }
     return { postes: achados, k: f.H / f.W };
