@@ -1609,7 +1609,6 @@
       </label>
       ${avisoLido(n)}
       <div class="cq-outros">
-        <button type="button" class="botao botao-vao" data-acao="cq-vao-daqui">📏 Vão a partir daqui</button>
         <button type="button" class="botao botao-claro botao-nota" data-acao="cq-anotar">📝 Anotar aqui</button>
       </div>
       ${jaExiste ? `<div class="cq-existe">${jaExiste.croqui
@@ -3347,12 +3346,6 @@
         if (estado.cqVaoNovo) { estado.cqVaoNovo = null; return render(); }
         Object.assign(estado, { cqVaoNovo: { pts: [] }, cqSel: null, cqNovo: null, cqNota: null, cqDesenho: false, cqAjuste: null, cqPainel: null });
         return render();
-      case "cq-vao-daqui": { // da folha "novo ponto aqui": este toque é o poste inicial
-        const n = estado.cqNovo;
-        if (!n) return;
-        Object.assign(estado, { cqVaoNovo: { pts: [] }, cqNovo: null });
-        return marcarPontaDoVao({ pag: n.pag, x: n.x, y: n.y });
-      }
       case "cq-ajustar-vao": // dois toques: no poste de início e no de fim
         estado.cqAjuste = { id: alvo.dataset.id, pts: [] };
         Object.assign(estado, { cqSel: null, cqNovo: null, cqNota: null, cqDesenho: false });
