@@ -253,6 +253,9 @@
         ${estado.senhaDe === u.user_id
           ? `<form class="nova-senha" data-senha="${u.user_id}"><input type="password" id="nova-senha" minlength="6" placeholder="Nova senha (6+)" autocomplete="new-password" required><button class="mini">Salvar</button><button type="button" class="mini" data-acao="cancelar-senha">Cancelar</button></form>`
           : `<button type="button" class="mini" data-acao="abrir-senha" data-id="${u.user_id}">Trocar senha</button>`}
+        ${u.user_id === eu ? "" : obrasDe(u.user_id)
+          ? `<button type="button" class="mini mini-perigo" disabled title="Tem obra lançada: para tirar o acesso, desmarque Ativo">Excluir</button>`
+          : `<button type="button" class="mini mini-perigo" data-acao="excluir-usuario" data-id="${u.user_id}">Excluir</button>`}
       </div>`).join("");
     return `<section class="bloco-ajuste">
           <h2 class="titulo-ajuste">👥 Usuários e acessos</h2>
@@ -269,6 +272,23 @@
           </form>
           <div class="cartao">${lista || `<p class="vazio">Nenhum usuário.</p>`}</div>
       </section>`;
+  }
+
+  /** exclui o usuário (login e cadastro) depois de confirmar; quem tem obra não sai (o banco confere) */
+  async function excluirUsuario(id) {
+    const u = (estado.usuarios || []).find((x) => x.user_id === id);
+    if (!u) return;
+    if (!confirm(`Excluir o usuário ${u.nome} (${u.email})?
+
+Ele não entra mais no app nem no painel, nos dois apps de medição. Não dá para desfazer: para voltar, é preciso criar de novo.`)) return;
+    try {
+      await Nuvem.excluirUsuario(id);
+      avisar(`Usuário ${u.nome} excluído.`);
+      estado.usuarios = estado.usuarios.filter((x) => x.user_id !== id);
+      render();
+    } catch (err) {
+      avisar(err.status === 404 || /could not find the function/i.test(err.message) ? "Falta rodar o supabase/02_excluir_usuario.sql no SQL Editor do Supabase." : err.message, "erro");
+    }
   }
 
   // ------------------------------------------------------------------ telas
@@ -642,6 +662,7 @@
         estado.senhaDe = acao.dataset.id;
         render();
         return document.getElementById("nova-senha")?.focus();
+      case "excluir-usuario": return excluirUsuario(acao.dataset.id);
       case "cancelar-senha":
         estado.senhaDe = null;
         return render();

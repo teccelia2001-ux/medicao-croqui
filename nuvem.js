@@ -143,6 +143,9 @@
     chamar("/rest/v1/rpc/medicao_criar_usuario", { metodo: "POST", corpo: { p_email: email, p_senha: senha, p_nome: nome, p_admin: admin } });
   const trocarSenha = (userId, senha) =>
     chamar("/rest/v1/rpc/medicao_trocar_senha", { metodo: "POST", corpo: { p_user_id: userId, p_senha: senha } });
+  // supabase/02_excluir_usuario.sql (deste app): não exclui quem tem obra nem o próprio administrador
+  const excluirUsuario = (userId) =>
+    chamar("/rest/v1/rpc/medicao_excluir_usuario", { metodo: "POST", corpo: { p_user_id: userId } });
 
   // ---------------------------------------------------------------- obras
   const listarObras = () => chamar("/rest/v1/medicao_croqui_obras_lista?select=*&order=atualizada_em.desc&limit=500");
@@ -233,7 +236,7 @@
   }
 
   window.Nuvem = {
-    configurada, ErroNuvem, lerSessao, entrar, sair, meuPerfil, catalogo, supervisores, alterarSupervisor, criarUsuario, trocarSenha,
+    configurada, ErroNuvem, lerSessao, entrar, sair, meuPerfil, catalogo, supervisores, alterarSupervisor, criarUsuario, trocarSenha, excluirUsuario,
     listarObras, baixarObra, apagarObra, enviarObra, enviarFotos, baixarFoto, listarFotos, listarFotosInfo, versaoObra, enviarProjeto, baixarProjeto,
   };
 })();

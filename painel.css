@@ -265,3 +265,5 @@ tbody.sem-clique tr:hover { background: transparent; }
 .espaco-barra i { display: block; height: 100%; background: #16a34a; border-radius: 5px; }
 .bloco-ajuste > .dica { margin: -4px 0 0; }
 .botao-link { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+.mini-perigo { color: #b91c1c; border-color: #fecaca; }
+.mini-perigo:hover:not(:disabled) { background: #fee2e2; border-color: #b91c1c; color: #b91c1c; }
