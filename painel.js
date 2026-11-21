@@ -31,8 +31,15 @@
     aberta: null, // obra completa aberta na gaveta
     fotos: new Map(), // fotoId -> objectURL
     gerando: false,
-    aba: (() => { try { return localStorage.getItem("painel_aba") || "obras"; } catch (e) { return "obras"; } })(), // obras | projetos | ajustes
+    aba: (() => {
+      const h = location.hash.slice(1);
+      if (["obras", "projetos", "ajustes"].includes(h)) return h;
+      try { return localStorage.getItem("painel_aba") || "obras"; } catch (e) { return "obras"; }
+    })(), // obras | projetos | ajustes
     baixandoProj: null, // obra com o projeto sendo baixado
+    espacoHtml: "", // espaço deste aparelho (Ajustes)
+    novaVersao: null, // { numero, data } quando saiu versão nova
+    procurandoVersao: false,
   };
   const ABAS = [["obras", "📋", "Obras medidas", "Obras"], ["projetos", "🗺", "Projetos", "Projetos"], ["ajustes", "⚙", "Ajustes", "Ajustes"]];
 
@@ -349,23 +356,101 @@
       </section>`;
   }
 
+  // ------------------------------------------------------------------ este aparelho (vindo dos Ajustes do app)
+  const ehIos = () => /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  /** a mesma chave que o app lê ao tirar a foto (mesmo endereço = mesmo guardado no aparelho) */
+  const copiaLigada = () => {
+    try { return localStorage.getItem("croqui_copia_fotos") !== "nao"; } catch (e) { return true; }
+  };
+  const fmtTamanho = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1).replace(".", ",")} GB`
+    : b >= 1024 ** 2 ? `${Math.round(b / 1024 ** 2)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+  async function medirEspaco() {
+    try {
+      const [esp, perm, todas] = await Promise.all([Banco.espaco(), Banco.persistente(), Banco.todasFotos()]);
+      const medias = Math.max(250 * 1024, todas.length ? todas.reduce((t, f) => t + (f.blob?.size || 0), 0) / todas.length : 0);
+      const resta = esp ? Math.max(0, esp.quota - esp.usage) : 0;
+      estado.espacoHtml = `${esp ? `<div class="espaco-barra"><i style="width:${Math.min(100, (esp.usage / esp.quota) * 100).toFixed(1)}%"></i></div>
+          <p class="dica"><b>${fmtTamanho(esp.usage)}</b> usados de <b>${fmtTamanho(esp.quota)}</b> que o aparelho libera para o app · cabem ainda cerca de <b>${Math.floor(resta / medias).toLocaleString("pt-BR")} fotos</b>.</p>` : `<p class="dica">Este aparelho não informa o espaço.</p>`}
+        <p class="dica">${todas.length.toLocaleString("pt-BR")} fotos guardadas neste aparelho. ${perm ? "✓ Guarda permanente: o aparelho não apaga nada sozinho." : "⚠ O aparelho ainda não deu a guarda permanente. Instale o app na tela inicial para garantir."}</p>`;
+    } catch (e) {
+      estado.espacoHtml = `<p class="dica">Não deu para medir o espaço.</p>`;
+    }
+    const el = document.getElementById("espaco");
+    if (el) el.innerHTML = estado.espacoHtml;
+  }
+  /** tamanho da tela como o aparelho enxerga (para achar o que corta num aparelho) */
+  function medidaDaTela() {
+    const vv = window.visualViewport;
+    let txt = `${innerWidth}×${innerHeight} px · densidade ${(devicePixelRatio || 1).toFixed(2)}`;
+    if (vv && Math.abs(vv.scale - 1) > 0.01) txt += ` · zoom da página ${vv.scale.toFixed(2)}`;
+    if (screen?.width) txt += ` · aparelho ${screen.width}×${screen.height}`;
+    return txt;
+  }
+  async function procurarVersao(manual = false) {
+    if (!navigator.onLine) { if (manual) avisar("Sem internet para procurar atualização.", "erro"); return; }
+    if (manual) { estado.procurandoVersao = true; render(); }
+    try {
+      const txt = await (await fetch("versao.js", { cache: "no-store" })).text();
+      const numero = Number((txt.match(/numero:\s*(\d+)/) || [])[1]);
+      const data = (txt.match(/data:\s*"([^"]*)"/) || [])[1] || "";
+      estado.novaVersao = numero > Number(self.VERSAO_APP?.numero || 0) ? { numero, data } : null;
+      if (manual && !estado.novaVersao) avisar("Você já está na versão mais nova.");
+    } catch (e) {
+      if (manual) avisar("Não deu para procurar agora. Tente de novo.", "erro");
+    }
+    estado.procurandoVersao = false;
+    render();
+  }
+  /** a versão nova assume no aparelho (app e painel); a página recarrega */
+  async function atualizarApp() {
+    avisar("Atualizando…", "guardado");
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      if (reg) {
+        const assumiu = new Promise((ok) => navigator.serviceWorker.addEventListener("controllerchange", ok, { once: true }));
+        await reg.update();
+        await Promise.race([assumiu, new Promise((ok) => setTimeout(ok, 8000))]);
+      }
+    } catch (e) { /* recarrega assim mesmo */ }
+    location.reload();
+  }
+
   function abaAjustes() {
     const p = estado.perfil || {};
     const v = self.VERSAO_APP || {};
+    const nv = estado.novaVersao;
     return `<section class="bloco-ajuste">
         <h2 class="titulo-ajuste">👤 Sua conta</h2>
         <div class="cartao cartao-ajuste">
           <p><b>${esc(p.nome || "")}</b> · ${esc(p.email || "")}${p.admin ? " · administrador" : ""}</p>
-          <p class="dica">Mesmo acesso do app. O nome que sai na medição é o do cadastro.</p>
+          <p class="dica">Mesmo acesso do app. O nome que sai na medição é o do cadastro. Sair daqui também sai do app neste aparelho.</p>
           <button type="button" class="botao botao-claro" data-acao="sair">Sair da conta</button>
         </div>
       </section>
       ${p.admin ? usuariosHtml() : ""}
       <section class="bloco-ajuste">
-        <h2 class="titulo-ajuste">ℹ Versão</h2>
+        <h2 class="titulo-ajuste">📱 Este aparelho</h2>
+        <p class="dica">Vale para o celular (ou computador) em que o painel está aberto: o mesmo do app, no mesmo navegador.</p>
         <div class="cartao cartao-ajuste">
-          <p>Painel na <b>versão ${esc(v.numero ?? "—")}</b>${v.data ? ` · de ${esc(v.data)}` : ""}.</p>
-          <p class="dica">Para pegar uma versão nova, recarregue a página (Ctrl+F5).</p>
+          <b>Fotos</b>
+          ${ehIos()
+            ? `<p class="dica">No iPhone o app não consegue salvar sozinho na galeria. No ponto, toque em <b>💾 Salvar as fotos no celular</b> e escolha <b>Salvar imagens</b>.</p>`
+            : `<label class="chave chave-linha"><input type="checkbox" data-acao="copia-fotos" ${copiaLigada() ? "checked" : ""}>
+                <span>Salvar uma cópia de cada foto tirada no celular <small>(pasta Download, aparece na galeria)</small></span></label>`}
+          <p class="dica">As fotos também ficam guardadas no app e sobem para o banco.</p>
+        </div>
+        <div class="cartao cartao-ajuste">
+          <b>Versão do app</b>
+          <p>Você está na <b>versão ${esc(v.numero ?? "—")}</b>${v.data ? ` · de ${esc(v.data)}` : ""}.</p>
+          <p class="dica">Tela deste aparelho: ${esc(medidaDaTela())}</p>
+          ${nv ? `<p class="versao-nova">Nova versão ${esc(nv.numero)} disponível${nv.data ? ` (${esc(nv.data)})` : ""}.</p>
+              <button type="button" class="botao" data-acao="atualizar-app">⬇ Atualizar agora</button>
+              <small class="dica">O que foi lançado no app fica guardado; a página só recarrega.</small>`
+            : `<button type="button" class="botao botao-claro" data-acao="procurar-versao" ${estado.procurandoVersao ? "disabled" : ""}>${estado.procurandoVersao ? "Procurando…" : "🔄 Procurar atualização"}</button>`}
+        </div>
+        <div class="cartao cartao-ajuste">
+          <b>Espaço no aparelho</b>
+          <div id="espaco" class="espaco">${estado.espacoHtml || `<p class="dica">Medindo…</p>`}</div>
         </div>
       </section>`;
   }
@@ -469,6 +554,19 @@
     if (rolagem) document.querySelector(".gaveta").scrollTop = rolagem;
   }
 
+  /** botão Sair: com obra deste aparelho que ainda não subiu para o banco, não sai (sairia do app também) */
+  async function sairDaConta() {
+    try {
+      const pend = (await Banco.listarObras()).filter((o) => o.pendente && o.dono !== false).length;
+      if (pend) {
+        alert(`${pend === 1 ? "1 obra lançada neste aparelho ainda não subiu" : `${pend} obras lançadas neste aparelho ainda não subiram`} para o banco. Abra o app com internet até aparecer "Tudo salvo no banco" e saia depois.`);
+        return;
+      }
+    } catch (e) { /* sem banco do aparelho: sai */ }
+    try { await Banco.gravar("perfil", null); } catch (e) { /* segue */ }
+    sair();
+  }
+
   function sair() {
     Nuvem.sair();
     estado.perfil = null;
@@ -485,7 +583,7 @@
       estado.aba = aba.dataset.aba;
       try { localStorage.setItem("painel_aba", estado.aba); } catch (err) { /* sem espaço */ }
       render();
-      if (estado.aba === "ajustes" && estado.perfil?.admin && estado.usuarios === null) carregarUsuarios();
+      if (estado.aba === "ajustes") abrindoAjustes();
       return;
     }
     const pj = e.target.closest("[data-projeto]");
@@ -521,7 +619,9 @@
       case "fechar":
         estado.aberta = null;
         return render();
-      case "sair": return sair();
+      case "sair": return sairDaConta();
+      case "procurar-versao": return procurarVersao(true);
+      case "atualizar-app": return atualizarApp();
       case "abrir-senha":
         estado.senhaDe = acao.dataset.id;
         render();
@@ -540,6 +640,10 @@
   // nome, ativo e administrador de cada usuário
   $p.addEventListener("change", async (e) => {
     const t = e.target;
+    if (t.dataset.acao === "copia-fotos") {
+      try { localStorage.setItem("croqui_copia_fotos", t.checked ? "sim" : "nao"); } catch (err) { /* sem espaço */ }
+      return avisar(t.checked ? "Cada foto tirada no app vai ganhar uma cópia no celular." : "Cópia no celular desligada.");
+    }
     const id = t.dataset.uNome || t.dataset.uAtivo || t.dataset.uAdmin;
     if (!id) return;
     const campos = t.dataset.uNome ? { nome: t.value.trim().toUpperCase() } : t.dataset.uAtivo ? { ativo: t.checked } : { admin: t.checked };
@@ -637,7 +741,13 @@
     }
     render();
     carregar();
-    if (estado.aba === "ajustes" && estado.perfil?.admin) carregarUsuarios();
+    if (estado.aba === "ajustes") abrindoAjustes();
+    procurarVersao();
+  }
+  /** aba Ajustes aberta: usuários (administrador) e o espaço deste aparelho */
+  function abrindoAjustes() {
+    if (estado.perfil?.admin && estado.usuarios === null) carregarUsuarios();
+    medirEspaco();
   }
   iniciar();
 })();

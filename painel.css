@@ -254,3 +254,13 @@ tbody.sem-clique tr:hover { background: transparent; }
   .lateral-aba .lateral-nome { display: none; }
   .lateral-aba .lateral-curto { display: inline; white-space: nowrap; }
 }
+
+/* Ajustes: este aparelho (vindo do app) */
+.chave-linha { white-space: normal !important; align-items: flex-start !important; gap: 10px !important; font-size: 14px !important; }
+.chave-linha small { display: block; font-weight: 400; color: var(--suave); }
+.versao-nova { margin: 0; padding: 10px 12px; border-radius: 10px; background: #dcfce7; color: #166534; font-weight: 700; }
+.espaco { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.espaco p { margin: 0; }
+.espaco-barra { width: 100%; height: 10px; border-radius: 5px; background: #e2e8f0; overflow: hidden; }
+.espaco-barra i { display: block; height: 100%; background: #16a34a; border-radius: 5px; }
+.bloco-ajuste > .dica { margin: -4px 0 0; }

@@ -52,7 +52,6 @@
     filtro: "minhas", // minhas | todas
     enviando: false,
     online: navigator.onLine,
-    supervisores: null, // ajustes do administrador
     // croqui
     cqPag: 1, // folha do projeto aberta
     cqSel: null, // ponto escolhido no croqui (mostra o que foi feito nele)
@@ -473,11 +472,11 @@
   const ROLAM = ".ponto-col, .medicao-col, .cq-painel";
 
   function render() {
-    const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao, config: telaConfig };
+    const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao };
     const mesma = desenhada.tela === estado.tela && desenhada.ponto === estado.pontoId;
     const colunas = mesma ? [...$app.querySelectorAll(ROLAM)].map((c) => c.scrollTop) : null;
     const pagina = window.scrollY;
-    $app.innerHTML = telas[estado.tela]();
+    $app.innerHTML = (telas[estado.tela] || telaInicio)();
     if (colunas) {
       $app.querySelectorAll(ROLAM).forEach((c, i) => { if (colunas[i]) c.scrollTop = colunas[i]; });
       if (window.scrollY !== pagina) window.scrollTo(0, pagina);
@@ -726,7 +725,8 @@
         <div class="linha-topo">${o.selo}<small class="sub">alterada ${M.fmtHora(o.atualizada_em)}</small></div>
       </button>${o.meu ? `<button type="button" class="obra-lixo" data-acao="excluir-obra-lista" data-id="${o.id}" aria-label="Excluir a obra ${esc(o.numero)}" title="Excluir obra">🗑</button>` : ""}</div>`;
     return `<div class="pagina pagina-larga">
-      ${topo("", null, `<nav class="troca" aria-label="Trocar entre app e painel"><span class="ativo">📱 App</span><a href="painel.html">📊 Painel</a></nav><button type="button" class="link link-ajustes${estado.novaVersao ? " novidade" : ""}" data-acao="config" aria-label="Ajustes">⚙<span> Ajustes</span></button>`)}
+      ${topo("", null, `<nav class="troca" aria-label="Trocar entre app e painel"><span class="ativo">📱 App</span><a href="painel.html">📊 Painel</a></nav>`)}
+      ${estado.novaVersao ? `<div class="faixa faixa-ok faixa-versao"><span>Nova versão ${esc(estado.novaVersao.numero)} do app disponível.</span><button type="button" class="botao botao-pequeno" data-acao="atualizar-app">⬇ Atualizar agora</button></div>` : ""}
       ${!estado.online ? `<div class="faixa faixa-guardado">Sem internet: aparecem só as obras guardadas no celular. O que você lançar sobe para o banco quando o sinal voltar.</div>`
         : pendentes ? `<div class="faixa faixa-guardado">${estado.enviando ? "⟳ Enviando" : "⏳ Aguardando envio de"} ${plural(pendentes, "obra", "obras")} ao banco…</div>`
           : `<div class="faixa faixa-ok">✓ Tudo salvo no banco</div>`}
@@ -757,53 +757,6 @@
     const ios = /iPhone|iPad/i.test(navigator.userAgent);
     return `<div class="instalar"><button type="button" data-acao="instalar">📲 Instalar no celular</button>
       <p id="ajuda-instalar" hidden>${ios ? "No Safari, toque em Compartilhar e depois em Adicionar à Tela de Início." : "No menu ⋮ do Chrome, toque em Instalar aplicativo ou Adicionar à tela inicial."}</p></div>`;
-  }
-
-  // ---------- ajustes
-  function telaConfig() {
-    const p = estado.perfil || {};
-    const sups = estado.supervisores;
-    return `<div class="pagina">
-      ${topo("Ajustes", "inicio")}
-      <section class="cartao dados">
-        <b>Sua conta</b>
-        <p class="sub">${esc(p.nome)} · ${esc(p.email)}${p.admin ? " · administrador" : ""}</p>
-        <p class="sub">O nome que sai na medição é o do cadastro${p.admin ? "" : "; para corrigir, fale com o administrador"}.</p>
-        <button type="button" class="botao botao-perigo" data-acao="sair">Sair da conta</button>
-      </section>
-      <section class="cartao dados">
-        <b>Fotos</b>
-        ${ehIos()
-          ? `<p class="sub">No iPhone o app não consegue salvar sozinho na galeria. No ponto, toque em <b>💾 Salvar as fotos no celular</b> e escolha <b>Salvar imagens</b>.</p>`
-          : `<label class="chave-linha"><input type="checkbox" data-acao="copia-fotos" ${copiaLigada() ? "checked" : ""}>
-              <span>Salvar uma cópia de cada foto tirada no celular <small>(pasta Download, aparece na galeria)</small></span></label>`}
-        <p class="sub">As fotos também ficam guardadas no app e sobem para o banco.</p>
-      </section>
-      <section class="cartao dados">
-        <b>Versão do app</b>
-        <p class="sub">Você está na <b>versão ${esc(versaoAtual().numero)}</b>${versaoAtual().data ? ` · de ${esc(versaoAtual().data)}` : ""}.</p>
-        <p class="sub">Tela deste aparelho: ${esc(medidaDaTela())}</p>
-        ${estado.novaVersao
-          ? `<p class="versao-nova">Nova versão ${esc(estado.novaVersao.numero)} disponível${estado.novaVersao.data ? ` (${esc(estado.novaVersao.data)})` : ""}.</p>
-            <button type="button" class="botao" data-acao="atualizar-app">⬇ Atualizar agora</button>
-            <small class="sub">O que você lançou fica guardado; o app só recarrega.</small>`
-          : `<button type="button" class="botao botao-claro" data-acao="procurar-versao">${estado.procurandoVersao ? "Procurando…" : "🔄 Procurar atualização"}</button>`}
-      </section>
-      <section class="cartao dados">
-        <b>Espaço no celular</b>
-        <div id="espaco">${estado.espacoHtml || `<p class="sub">Medindo…</p>`}</div>
-      </section>
-      ${p.admin ? `<section class="cartao dados">
-        <b>Supervisores</b>
-        <p class="sub">Para criar a conta de um supervisor ou trocar a senha, use o <b>Painel › ⚙ Ajustes</b>. Aqui dá para ajustar o nome que sai na medição e o acesso.</p>
-        ${sups === null ? `<p class="vazio">Carregando…</p>` : sups.map((s) => `<div class="sup-linha">
-          <input value="${esc(s.nome)}" data-sup-nome="${s.user_id}" aria-label="Nome de ${esc(s.email)}">
-          <small class="sub">${esc(s.email)}</small>
-          <label><input type="checkbox" data-sup-ativo="${s.user_id}" ${s.ativo ? "checked" : ""}> ativo</label>
-          <label><input type="checkbox" data-sup-admin="${s.user_id}" ${s.admin ? "checked" : ""} ${s.user_id === p.user_id ? "disabled" : ""}> administrador</label>
-        </div>`).join("")}
-      </section>` : ""}
-    </div>`;
   }
 
   // ---------- obra (dados)
@@ -3033,19 +2986,6 @@
      excluir a foto, o ponto ou a obra. */
   const fmtTamanho = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1).replace(".", ",")} GB`
     : b >= 1024 ** 2 ? `${Math.round(b / 1024 ** 2)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
-  async function mostrarEspaco() {
-    const el = document.getElementById("espaco");
-    if (!el) return;
-    const [esp, perm, todas] = await Promise.all([Banco.espaco(), Banco.persistente(), Banco.todasFotos()]);
-    // conta por baixo: no mínimo 250 KB por foto (foto real de campo fica entre 200 e 700 KB)
-    const medias = Math.max(250 * 1024, todas.length ? todas.reduce((t, f) => t + (f.blob?.size || 0), 0) / todas.length : 0);
-    const resta = esp ? Math.max(0, esp.quota - esp.usage) : 0;
-    estado.espacoHtml = `${esp ? `<div class="espaco-barra"><i style="width:${Math.min(100, (esp.usage / esp.quota) * 100).toFixed(1)}%"></i></div>
-        <p class="sub"><b>${fmtTamanho(esp.usage)}</b> usados de <b>${fmtTamanho(esp.quota)}</b> que o celular libera para o app · cabem ainda cerca de <b>${Math.floor(resta / medias).toLocaleString("pt-BR")} fotos</b>.</p>` : `<p class="sub">Este celular não informa o espaço.</p>`}
-      <p class="sub">${todas.length.toLocaleString("pt-BR")} fotos guardadas no app. ${perm ? "✓ Guarda permanente: o celular não apaga nada sozinho." : "⚠ O celular ainda não deu a guarda permanente. Instale o app na tela inicial para garantir."}</p>`;
-    const atual = document.getElementById("espaco");
-    if (atual) atual.innerHTML = estado.espacoHtml;
-  }
   /** aviso na tela inicial quando o espaço do app passa de 85% */
   async function conferirEspaco() {
     const esp = await Banco.espaco();
@@ -3316,13 +3256,6 @@
     const o = estado.obra;
     switch (alvo.dataset.acao) {
       case "inicio": return irPara("inicio");
-      case "config": {
-        estado.supervisores = estado.perfil?.admin ? null : [];
-        await irPara("config");
-        carregarAjustes();
-        return mostrarEspaco();
-      }
-      case "procurar-versao": return procurarVersao(true);
       case "atualizar-app": return atualizarApp();
       case "sair": return sairDaConta();
       case "filtro":
@@ -3937,22 +3870,6 @@
   // fechando ou trocando de app: tenta mandar o que falta (o que não for, continua guardado)
   window.addEventListener("pagehide", () => enviarPendentes());
 
-  // ajustes do administrador: nome, ativo e administrador de cada supervisor
-  $app.addEventListener("change", async (e) => {
-    const t = e.target;
-    const id = t.dataset.supNome || t.dataset.supAtivo || t.dataset.supAdmin;
-    if (!id) return;
-    const campos = t.dataset.supNome ? { nome: t.value.trim().toUpperCase() } : t.dataset.supAtivo ? { ativo: t.checked } : { admin: t.checked };
-    if (campos.nome === "") return avisar("O nome não pode ficar vazio.", "erro");
-    try {
-      await Nuvem.alterarSupervisor(id, campos);
-      if (t.dataset.supNome) t.value = campos.nome;
-      avisar("Supervisor atualizado.");
-    } catch (err) {
-      avisar(err.message, "erro");
-    }
-  });
-
   // ------------------------------------------------------------------ entrada
   $app.addEventListener("submit", async (e) => {
     if (e.target.id !== "form-entrar") return;
@@ -4014,29 +3931,11 @@
 
   // ------------------------------------------------------------------ versão do app
   /* versao.js diz o número; o app pergunta ao servidor se saiu outro (ao abrir, ao
-     voltar o sinal, ao voltar para o app e a cada 15 min) e mostra em Ajustes. */
+     voltar o sinal, ao voltar para o app e a cada 15 min) e mostra a faixa na tela inicial. */
   const versaoAtual = () => window.VERSAO_APP || { numero: "?", data: "" };
-  /** tamanho da tela como o app enxerga (para achar o que corta num aparelho):
-   *  largura × altura, zoom da página e, se algo passa da borda, o que é */
-  function medidaDaTela() {
-    const vv = window.visualViewport, W = innerWidth, H = innerHeight;
-    let txt = `${W}×${H} px · densidade ${(devicePixelRatio || 1).toFixed(2)}`;
-    if (vv && Math.abs(vv.scale - 1) > 0.01) txt += ` · zoom da página ${vv.scale.toFixed(2)}`;
-    if (screen?.width) txt += ` · aparelho ${screen.width}×${screen.height}`;
-    const larga = document.documentElement.scrollWidth;
-    if (larga > W + 1) {
-      let pior = null;
-      for (const e of document.body.querySelectorAll("*")) {
-        const r = e.getBoundingClientRect();
-        if (r.right > W + 1 && (!pior || r.right > pior.r)) pior = { e, r: r.right };
-      }
-      txt += ` · passa da borda: ${larga} px${pior ? ` (${pior.e.tagName.toLowerCase()}.${String(pior.e.className).split(" ")[0]})` : ""}`;
-    }
-    return txt;
-  }
   async function procurarVersao(manual = false) {
     if (!navigator.onLine) { if (manual) avisar("Sem internet para procurar atualização.", "erro"); return; }
-    if (manual) { estado.procurandoVersao = true; if (estado.tela === "config") render(); }
+    if (manual) { estado.procurandoVersao = true; }
     try {
       const txt = await (await fetch("versao.js", { cache: "no-store" })).text();
       const numero = Number((txt.match(/numero:\s*(\d+)/) || [])[1]);
@@ -4045,12 +3944,12 @@
       estado.novaVersao = numero > Number(versaoAtual().numero) ? { numero, data } : null;
       if (manual && !estado.novaVersao) avisar("Você já está na versão mais nova.");
       if (manual || antes !== estado.novaVersao?.numero) {
-        if ((estado.tela === "config" || estado.tela === "inicio") && !estado.escolhido && !document.activeElement?.matches?.("input, textarea")) render();
+        if ((estado.tela === "inicio") && !estado.escolhido && !document.activeElement?.matches?.("input, textarea")) render();
       }
     } catch (e) {
       if (manual) avisar("Não deu para procurar agora. Tente de novo.", "erro");
     } finally {
-      if (manual) { estado.procurandoVersao = false; if (estado.tela === "config") render(); }
+      if (manual) { estado.procurandoVersao = false; }
     }
   }
   async function atualizarApp() {
@@ -4085,16 +3984,6 @@
     await Banco.gravar("perfil", null);
     estado.tela = "entrar";
     render();
-  }
-
-  async function carregarAjustes() {
-    if (!estado.perfil?.admin || !navigator.onLine) return;
-    try {
-      estado.supervisores = await Nuvem.supervisores();
-    } catch (e) {
-      estado.supervisores = [];
-    }
-    if (estado.tela === "config") render();
   }
 
   /** Abre o app: com sessão e catálogo guardados entra direto, mesmo sem sinal. */
