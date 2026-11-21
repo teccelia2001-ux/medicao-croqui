@@ -873,7 +873,7 @@
       const tp = M.totaisPonto(p);
       return `<button type="button" class="cartao ponto-item" data-acao="abrir-ponto" data-id="${p.id}">
         <div class="linha-topo"><b class="ponto-nome">${esc(p.nome)}</b><b class="valor">${M.fmtMoeda(tp.valor)}</b></div>
-        <small class="sub">${plural(p.itens.length, "serviço", "serviços")} · ${p.fotos.length ? "📷 " + p.fotos.length : "sem foto"}${p.gps ? " · 📍" : ""}${o.projeto ? (p.croqui ? " · 📌 no croqui" : " · fora do croqui") : ""}</small>
+        <small class="sub">${plural(p.itens.length, "serviço", "serviços")}${p.fotos.length ? " · 📷 " + p.fotos.length : p.vao ? "" : " · sem foto"}${p.gps ? " · 📍" : ""}${o.projeto ? (p.croqui ? " · 📌 no croqui" : " · fora do croqui") : ""}</small>
         ${p.obs ? `<small class="sub">${esc(p.obs)}</small>` : ""}
       </button>`;
     }).join("");
@@ -1576,7 +1576,7 @@
         <b class="valor">${M.fmtMoeda(tp.valor)}</b>
         <button type="button" class="remover" data-acao="cq-fechar" aria-label="Fechar">×</button>
       </div>
-      <small class="sub">${p.vao ? `📏 ${esc(medidasVao(p) || "metragem não informada")} · ` : ""}${p.dia ? esc(M.fmtDia(p.dia)) + " · " : ""}${plural(p.itens.length, "serviço", "serviços")} · ${p.fotos.length ? "📷 " + p.fotos.length : "sem foto"}${p.croqui ? "" : " · fora do croqui"}</small>
+      <small class="sub">${p.vao ? `📏 ${esc(medidasVao(p) || "metragem não informada")} · ` : ""}${p.dia ? esc(M.fmtDia(p.dia)) + " · " : ""}${plural(p.itens.length, "serviço", "serviços")}${p.fotos.length ? " · 📷 " + p.fotos.length : p.vao ? "" : " · sem foto"}${p.croqui ? "" : " · fora do croqui"}</small>
       ${p.obs ? `<p class="cq-obs">${esc(p.obs)}</p>` : ""}
       <div class="cq-corpo">
         ${secoes || `<p class="vazio">Nenhum serviço lançado neste ponto ainda.</p>`}
@@ -2566,7 +2566,7 @@
     const t = M.totaisObra(o);
     const secoes = M.estrutura(o.pontos);
     const semServico = M.pontosReais(o.pontos).filter((p) => !p.itens.length);
-    const semFoto = M.pontosReais(o.pontos).filter((p) => !p.fotos.length);
+    const semFoto = M.pontosReais(o.pontos).filter((p) => !p.vao && !p.fotos.length); // vão não precisa de foto
     const resumo = secoes.map((s) => `<section class="bloco">
       <h2 class="secao secao-${s.op.toLowerCase()}"><span>${esc(s.titulo)}</span><span>${M.fmtMoeda(s.subtotal)}</span></h2>
       ${s.cats.map(([cat, itens]) => `<div class="cartao resumo-cat">
