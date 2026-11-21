@@ -2584,8 +2584,8 @@
         <span class="chip chip-us"><b>${M.fmtNum(t.us)}</b> US</span>
         <span class="chip">Execução <b>${esc(dataExec(o))}</b></span>
       </div>
-      ${semServico.length ? `<div class="faixa faixa-guardado">Sem serviço: ${esc(semServico.map((p) => p.nome).join(", "))}. Eles saem só no PDF, com as fotos.</div>` : ""}
-      ${semFoto.length ? `<div class="faixa faixa-guardado">Sem foto: ${esc(semFoto.map((p) => p.nome).join(", "))}.</div>` : ""}
+      ${semServico.length ? `<div class="faixa faixa-guardado faixa-ir">Sem serviço: ${botoesIrAoPonto(semServico)} Eles saem só no PDF, com as fotos.</div>` : ""}
+      ${semFoto.length ? `<div class="faixa faixa-guardado faixa-ir">Sem foto: ${botoesIrAoPonto(semFoto)}</div>` : ""}
       <div class="medicao-colunas"><div class="medicao-col">
       ${blocoFolhas(inteira)}
       <section class="cartao dados">
@@ -2660,6 +2660,9 @@
         </details>
       </section>`;
   }
+
+  /** nomes dos avisos da medição: cada um é um botão que leva direto ao ponto no projeto */
+  const botoesIrAoPonto = (lista) => lista.map((p) => `<button type="button" class="ir-ponto" data-acao="ir-ao-ponto" data-id="${esc(p.id)}" title="${p.croqui ? "Ver no projeto" : "Abrir o ponto"}">${p.croqui ? "📍 " : ""}${esc(p.nome)}</button>`).join(" ");
 
   const dataExec = (o) => {
     const dias = o.pontos.filter((p) => p.itens.length && p.dia).map((p) => p.dia).sort();
@@ -3436,6 +3439,12 @@
         await irPara("ponto", { pontoId: p.id });
         estado.foto = { id: alvo.dataset.id };
         return render();
+      }
+      case "ir-ao-ponto": { // dos avisos da medição: o ponto no projeto (ou a tela dele, se não está no croqui)
+        const p = pontoPorId(alvo.dataset.id);
+        if (!p) return;
+        if (p.croqui && estado.obra.projeto) return irPara("croqui", { cqSel: p.id, cqCentrar: p.id, cqPag: p.croqui.pag || 1 });
+        return irPara("ponto", { pontoId: p.id });
       }
       case "ver-no-croqui": {
         const p = ponto();
