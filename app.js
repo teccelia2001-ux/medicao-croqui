@@ -130,9 +130,18 @@
    *  essas fotos no ponto (adotarFotos) e o de fotos traz os pontos novos a cada poucos segundos. */
   const modoFotos = () => { try { return localStorage.getItem("croqui_modo_fotos") === "sim"; } catch (e) { return false; } };
   /** obra de outro supervisor: abre só para consulta e para gerar a medição */
-  const deOutro = (o) => o && o.dono === false;
+  const deOutro = (o) => {
+    if (!o) return false;
+    if (o.dono === false) return true;
+    // a obra guardada no aparelho é de quem a criou (dono_id), não de quem entrou agora: com
+    // outro login no mesmo celular, as obras do primeiro ficavam como do novo, até com a lixeira
+    const meu = estado.perfil?.user_id;
+    if (!meu) return false;
+    const dono = o.dono_id || estado.remotas?.find((r) => r.id === o.id)?.supervisor_id;
+    return !!dono && dono !== meu;
+  };
   /** nada da obra pode ser mudado aqui: obra de outro supervisor, ou aparelho no modo só fotos */
-  const soLeitura = (o) => o && (o.dono === false || modoFotos());
+  const soLeitura = (o) => o && (deOutro(o) || modoFotos());
   /** foto do modo só fotos leva o ponto no id (é o nome do arquivo no banco) */
   const idDaFoto = (p) => (modoFotos() ? `${p.id}__${novoId()}` : novoId());
 
@@ -472,7 +481,7 @@
   const ROLAM = ".ponto-col, .medicao-col, .cq-painel";
 
   function render() {
-    const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao };
+    const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao, conta: telaConta };
     const mesma = desenhada.tela === estado.tela && desenhada.ponto === estado.pontoId;
     const colunas = mesma ? [...$app.querySelectorAll(ROLAM)].map((c) => c.scrollTop) : null;
     const pagina = window.scrollY;
@@ -677,7 +686,7 @@
         id: o.id, numero: o.numero, cidade: o.municipio || o.local || "", total: t.valor,
         pontos: M.pontosReais(o.pontos).length, fotos: o.pontos.reduce((n, p) => n + p.fotos.length, 0), croqui: !!o.projeto,
         atualizada_em: o.atualizada_em, supervisor: deOutro(o) ? o.supervisor_nome || r?.supervisor_nome : estado.perfil?.nome,
-        selo: seloHtml(o), meu: !soLeitura(o),
+        selo: seloHtml(o), meu: !soLeitura(o), outro: deOutro(o),
       };
     });
     const locais = new Set(estado.obras.map((o) => o.id));
@@ -685,11 +694,13 @@
       if (locais.has(r.id)) continue;
       lista.push({
         id: r.id, numero: r.numero, cidade: r.municipio || r.local || "", total: Number(r.total), pontos: r.qtd_pontos,
-        fotos: null, atualizada_em: r.atualizada_em, supervisor: r.supervisor_nome, meu: r.supervisor_id === meu,
+        fotos: null, atualizada_em: r.atualizada_em, supervisor: r.supervisor_nome, meu: r.supervisor_id === meu, outro: r.supervisor_id !== meu,
         selo: r.supervisor_id === meu ? `<span class="selo selo-ok">✓ No banco</span>` : `<span class="selo selo-consulta">Consulta</span>`,
       });
     }
-    return lista.sort((a, b) => (b.atualizada_em || "").localeCompare(a.atualizada_em || ""));
+    // acesso comum (supervisor) vê só as próprias obras; o administrador vê todas
+    const visiveis = estado.perfil?.admin ? lista : lista.filter((x) => !x.outro);
+    return visiveis.sort((a, b) => (b.atualizada_em || "").localeCompare(a.atualizada_em || ""));
   }
 
   /** Exclui a obra do celular e põe na fila para sair do banco, depois de confirmar.
@@ -725,7 +736,7 @@
         <div class="linha-topo">${o.selo}<small class="sub">alterada ${M.fmtHora(o.atualizada_em)}</small></div>
       </button>${o.meu ? `<button type="button" class="obra-lixo" data-acao="excluir-obra-lista" data-id="${o.id}" aria-label="Excluir a obra ${esc(o.numero)}" title="Excluir obra">🗑</button>` : ""}</div>`;
     return `<div class="pagina pagina-larga">
-      ${topo("", null, estado.perfil?.admin ? `<nav class="troca" aria-label="Trocar entre app e painel"><span class="ativo">📱 App</span><a href="painel.html">📊 Painel</a></nav>` : "")}
+      ${topo("", null, estado.perfil?.admin ? `<nav class="troca" aria-label="Trocar entre app e painel"><span class="ativo">📱 App</span><a href="painel.html">📊 Painel</a></nav>` : `<button type="button" class="link link-ajustes" data-acao="conta" aria-label="Ajustes">⚙<span> Ajustes</span></button>`)}
       ${estado.novaVersao ? `<div class="faixa faixa-ok faixa-versao"><span>Nova versão ${esc(estado.novaVersao.numero)} do app disponível.</span><button type="button" class="botao botao-pequeno" data-acao="atualizar-app">⬇ Atualizar agora</button></div>` : ""}
       ${!estado.online ? `<div class="faixa faixa-guardado">Sem internet: aparecem só as obras guardadas no celular. O que você lançar sobe para o banco quando o sinal voltar.</div>`
         : pendentes ? `<div class="faixa faixa-guardado">${estado.enviando ? "⟳ Enviando" : "⏳ Aguardando envio de"} ${plural(pendentes, "obra", "obras")} ao banco…</div>`
@@ -748,24 +759,26 @@
             : estado.remotas === null && estado.online ? `<p class="vazio">Carregando as obras do banco…</p>`
               : `<p class="vazio">Nenhuma obra ainda. Toque em <b>Nova obra</b> para começar.</p>`)}</div>
       </section>
-      ${contaHtml()}
     </div>`;
   }
 
-  /** Supervisor (sem acesso ao Painel, onde ficam os Ajustes): a conta, o Sair e a cópia das
-   *  fotos ficam no pé da tela inicial. O administrador acha tudo no Painel › Ajustes. */
-  function contaHtml() {
-    const p = estado.perfil;
-    if (!p || p.admin) return "";
-    return `<section class="cartao dados conta-supervisor">
-        <b>👤 ${esc(p.nome || "")}</b>
-        <p class="sub">${esc(p.email || "")} · supervisor</p>
+  /** ⚙ Ajustes do supervisor (sem acesso ao Painel, onde ficam os Ajustes do administrador):
+   *  a conta, a cópia das fotos e o Sair. */
+  function telaConta() {
+    const p = estado.perfil || {};
+    return `<div class="pagina">
+      ${topo("Ajustes", "inicio")}
+      <section class="cartao dados conta-supervisor">
+        <b>👤 Sua conta</b>
+        <p class="sub"><b>${esc(p.nome || "")}</b> · ${esc(p.email || "")} · supervisor</p>
+        <p class="sub">O nome que sai na medição é o do cadastro; para corrigir, fale com o administrador.</p>
         ${ehIos()
           ? `<p class="sub">Fotos: no iPhone, para guardar na galeria, toque em <b>💾 Salvar as fotos no celular</b> no ponto.</p>`
           : `<label class="chave-linha"><input type="checkbox" data-acao="copia-fotos" ${copiaLigada() ? "checked" : ""}>
               <span>Salvar uma cópia de cada foto tirada no celular <small>(pasta Download, aparece na galeria)</small></span></label>`}
         <button type="button" class="botao botao-perigo" data-acao="sair">Sair da conta</button>
-      </section>`;
+      </section>
+    </div>`;
   }
 
   function instalarHtml() {
@@ -3274,6 +3287,7 @@
     switch (alvo.dataset.acao) {
       case "inicio": return irPara("inicio");
       case "atualizar-app": return atualizarApp();
+      case "conta": return irPara("conta");
       case "sair": return sairDaConta();
       case "filtro":
         estado.filtro = alvo.dataset.f;
