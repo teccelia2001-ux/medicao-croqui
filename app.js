@@ -2565,7 +2565,7 @@
     const o = obraDaMedicao(inteira);
     const t = M.totaisObra(o);
     const secoes = M.estrutura(o.pontos);
-    const semServico = M.pontosReais(o.pontos).filter((p) => !p.itens.length);
+    const semServico = M.pontosReais(o.pontos).filter((p) => !p.vao && !p.itens.length); // vão sem serviço é só o traçado: não é aviso
     const semFoto = M.pontosReais(o.pontos).filter((p) => !p.vao && !p.fotos.length); // vão não precisa de foto
     const resumo = secoes.map((s) => `<section class="bloco">
       <h2 class="secao secao-${s.op.toLowerCase()}"><span>${esc(s.titulo)}</span><span>${M.fmtMoeda(s.subtotal)}</span></h2>
