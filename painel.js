@@ -272,11 +272,23 @@
   }
 
   // ------------------------------------------------------------------ telas
+  /** o painel é só do administrador; o supervisor fica no app */
+  const ehAdmin = () => !!estado.perfil?.admin;
+  function telaSemAcesso() {
+    return `<div class="entrar-pagina"><div class="entrar">
+      <img src="logo-teccel-red.png" alt="Teccel">
+      <h1>Painel só para administrador</h1>
+      <p>${esc(estado.perfil?.nome || "")}, o seu acesso é de supervisor: as obras ficam no app.</p>
+      <a class="botao botao-link" href="./">📱 Abrir o app</a>
+      <button type="button" class="botao botao-claro" data-acao="sair">Entrar com outro acesso</button>
+    </div></div>`;
+  }
+
   function telaEntrar() {
     return `<div class="entrar-pagina"><form class="entrar" id="form-entrar">
       <img src="logo-teccel-red.png" alt="Teccel">
       <h1>Painel do croqui</h1>
-      <p>Entre com o mesmo acesso do app.</p>
+      <p>Só para administrador. Entre com o mesmo acesso do app.</p>
       <label>E-mail <input id="e-email" type="email" autocomplete="username" required></label>
       <label>Senha <input id="e-senha" type="password" autocomplete="current-password" required></label>
       <div class="erro" id="erro-entrar" hidden></div>
@@ -541,6 +553,10 @@
       $p.innerHTML = telaEntrar();
       return;
     }
+    if (!ehAdmin()) {
+      $p.innerHTML = telaSemAcesso();
+      return;
+    }
     const busca = document.activeElement?.id === "f-busca" ? document.activeElement.selectionStart : null;
     const rolagem = document.querySelector(".gaveta")?.scrollTop;
     // não refaz a tela enquanto o administrador digita no formulário de usuário
@@ -720,7 +736,7 @@
     try {
       estado.perfil = await Nuvem.entrar(document.getElementById("e-email").value.trim(), document.getElementById("e-senha").value);
       render();
-      carregar();
+      if (ehAdmin()) carregar();
     } catch (err) {
       erro.textContent = err.status === 0 ? "Sem conexão com o banco." : err.message;
       erro.hidden = false;
@@ -740,6 +756,7 @@
       if (!estado.perfil) return sair();
     }
     render();
+    if (!ehAdmin()) return; // supervisor: só a tela de sem acesso
     carregar();
     if (estado.aba === "ajustes") abrindoAjustes();
     procurarVersao();

@@ -725,7 +725,7 @@
         <div class="linha-topo">${o.selo}<small class="sub">alterada ${M.fmtHora(o.atualizada_em)}</small></div>
       </button>${o.meu ? `<button type="button" class="obra-lixo" data-acao="excluir-obra-lista" data-id="${o.id}" aria-label="Excluir a obra ${esc(o.numero)}" title="Excluir obra">🗑</button>` : ""}</div>`;
     return `<div class="pagina pagina-larga">
-      ${topo("", null, `<nav class="troca" aria-label="Trocar entre app e painel"><span class="ativo">📱 App</span><a href="painel.html">📊 Painel</a></nav>`)}
+      ${topo("", null, estado.perfil?.admin ? `<nav class="troca" aria-label="Trocar entre app e painel"><span class="ativo">📱 App</span><a href="painel.html">📊 Painel</a></nav>` : "")}
       ${estado.novaVersao ? `<div class="faixa faixa-ok faixa-versao"><span>Nova versão ${esc(estado.novaVersao.numero)} do app disponível.</span><button type="button" class="botao botao-pequeno" data-acao="atualizar-app">⬇ Atualizar agora</button></div>` : ""}
       ${!estado.online ? `<div class="faixa faixa-guardado">Sem internet: aparecem só as obras guardadas no celular. O que você lançar sobe para o banco quando o sinal voltar.</div>`
         : pendentes ? `<div class="faixa faixa-guardado">${estado.enviando ? "⟳ Enviando" : "⏳ Aguardando envio de"} ${plural(pendentes, "obra", "obras")} ao banco…</div>`
