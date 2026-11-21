@@ -1031,7 +1031,9 @@
       const d = Math.hypot(x.x - pos.x, (x.y - pos.y) * k);
       if (d < 0.2 && (!rot || d < rot.d)) rot = { ...x, d };
     }
-    const doRotulo = rot && postes(o).find((p) => p.nome.trim().toUpperCase() === rot.nome && p.id !== evitar);
+    // só o ponto desta folha: com folhas de número repetido (dois projetos na obra), o P6 da
+    // outra folha não serve (o vão pegava o P6 e o P7 de outra folha, que aqui nem foram criados)
+    const doRotulo = rot && postes(o).find((p) => p.nome.trim().toUpperCase() === rot.nome && p.id !== evitar && p.croqui && (p.croqui.pag || 1) === pos.pag);
     let melhor = null;
     for (const p of postes(o)) {
       if (!p.croqui || (p.croqui.pag || 1) !== pos.pag || p.id === evitar) continue;
@@ -1292,6 +1294,23 @@
     if (!local || local.em !== (o.projeto?.em || "")) return false;
     o.rotulos = { em: local.em, pags: JSON.parse(JSON.stringify(local.pags)) };
     return true;
+  }
+  /** Ponta de vão presa ao poste de OUTRA folha (o P6 da folha 1 pego na folha 3, onde o P6
+   *  não foi criado): vira ponta livre com o mesmo nome, no lugar onde a linha já está. */
+  function soltarPontasDeOutraFolha(o) {
+    let n = 0;
+    for (const v of o.pontos) {
+      if (!v.vao || !v.croqui || !v.vao.linha) continue;
+      const pag = v.croqui.pag || 1;
+      for (const lado of ["de", "para"]) {
+        const q = v.vao[lado] && o.pontos.find((x) => x.id === v.vao[lado]);
+        if (!q?.croqui || (q.croqui.pag || 1) === pag) continue;
+        v.vao[lado + "Nome"] = q.nome;
+        v.vao[lado] = null;
+        n++;
+      }
+    }
+    return n;
   }
   /** Pontos vazios que a análise antiga (até a versão 45) criava sozinha: saem da obra. O que
    *  tem serviço, foto ou observação fica. */
@@ -3469,6 +3488,7 @@
         }
         estado.obra = obra;
         estado.filtroPonto = ""; // obra nova, pesquisa limpa
+        if (!soLeitura(obra) && soltarPontasDeOutraFolha(obra)) await salvarAgora();
         // com o projeto anexado, a obra abre no croqui
         return irPara(obra.projeto ? "croqui" : "obra", { cqSel: null, cqPag: 1 });
       }
