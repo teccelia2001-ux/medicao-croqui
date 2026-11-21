@@ -748,7 +748,24 @@
             : estado.remotas === null && estado.online ? `<p class="vazio">Carregando as obras do banco…</p>`
               : `<p class="vazio">Nenhuma obra ainda. Toque em <b>Nova obra</b> para começar.</p>`)}</div>
       </section>
+      ${contaHtml()}
     </div>`;
+  }
+
+  /** Supervisor (sem acesso ao Painel, onde ficam os Ajustes): a conta, o Sair e a cópia das
+   *  fotos ficam no pé da tela inicial. O administrador acha tudo no Painel › Ajustes. */
+  function contaHtml() {
+    const p = estado.perfil;
+    if (!p || p.admin) return "";
+    return `<section class="cartao dados conta-supervisor">
+        <b>👤 ${esc(p.nome || "")}</b>
+        <p class="sub">${esc(p.email || "")} · supervisor</p>
+        ${ehIos()
+          ? `<p class="sub">Fotos: no iPhone, para guardar na galeria, toque em <b>💾 Salvar as fotos no celular</b> no ponto.</p>`
+          : `<label class="chave-linha"><input type="checkbox" data-acao="copia-fotos" ${copiaLigada() ? "checked" : ""}>
+              <span>Salvar uma cópia de cada foto tirada no celular <small>(pasta Download, aparece na galeria)</small></span></label>`}
+        <button type="button" class="botao botao-perigo" data-acao="sair">Sair da conta</button>
+      </section>`;
   }
 
   function instalarHtml() {

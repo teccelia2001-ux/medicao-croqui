@@ -1241,3 +1241,6 @@ body { max-width: 100vw; }
 
 /* versão nova: faixa na tela inicial (os Ajustes foram para o Painel) */
 .faixa-versao { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+/* conta do supervisor no pé da tela inicial */
+.conta-supervisor { margin-top: 8px; }
