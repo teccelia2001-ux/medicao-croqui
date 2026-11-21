@@ -183,8 +183,10 @@
   }
 
   // ------------------------------------------------------------------ apoio
+  /** número da obra e, na medição de uma folha só, o nome da folha (FOLHA 1 - IDENT) */
+  const numeroObra = (obra) => `${obra.numero || ""}${obra.folha ? ` · ${obra.folha}` : ""}`;
   const nomeArquivo = (obra, ext) =>
-    `FECHAMENTO SIMPLIFICADO OBRA Nº ${String(obra.numero || "SEM NUMERO").replace(/\//g, "-")} - MEDIÇÃO POR CROQUI.${ext}`;
+    `FECHAMENTO SIMPLIFICADO OBRA Nº ${String(obra.numero || "SEM NUMERO").replace(/\//g, "-")}${obra.folha ? " - " + obra.folha.replace(/[\\/:*?"<>|]/g, "-") : ""} - MEDIÇÃO POR CROQUI.${ext}`;
 
   async function imagemBase64(url) {
     const r = await fetch(url);
@@ -302,7 +304,7 @@
     ws.getCell("A3").alignment = CENTRO;
     ws.getCell("A4").value = "OBRA Nº:";
     ws.mergeCells("B4:C4");
-    ws.getCell("B4").value = obra.numero;
+    ws.getCell("B4").value = numeroObra(obra);
     ws.getCell("B4").font = { bold: true, size: 14 };
     ws.mergeCells("D4:E4");
     ws.getCell("D4").value = "TOTAL:";
@@ -429,7 +431,7 @@
       doc.setFont("helvetica", "normal");
       doc.text(rotulo, direita - w - 1, y, { align: "right" });
     };
-    linhaDir("OBRA Nº", String(obra.numero || ""), TOPO + 5);
+    linhaDir("OBRA Nº", numeroObra(obra), TOPO + 5);
     linhaDir("TOTAL", moedaPdf(total), TOPO + 9.5);
     linhaDir("TOTAL US", fmtNum(totalUs), TOPO + 14);
 
@@ -504,7 +506,7 @@
       doc.setTextColor(255, 255, 255);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
-      doc.text(`CROQUI · OBRA Nº ${obra.numero}${c.total > 1 ? ` · FOLHA ${c.pag} DE ${c.total}` : ""}`, pw / 2, TOPO + 4, { align: "center", baseline: "middle" });
+      doc.text(`CROQUI · OBRA Nº ${numeroObra(obra)}${c.total > 1 && !obra.folha ? ` · FOLHA ${c.pag} DE ${c.total}` : ""}`, pw / 2, TOPO + 4, { align: "center", baseline: "middle" });
       doc.setTextColor(0, 0, 0);
       const topoImg = TOPO + 10, livreW = pw - 2 * M, livreH = ph - topoImg - PE - 6;
       const e = Math.min(livreW / c.w, livreH / c.h);
@@ -547,7 +549,7 @@
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
-    doc.text(`MEDIÇÃO POR PONTO · OBRA Nº ${obra.numero}`, M + L / 2, y + 4, { align: "center", baseline: "middle" });
+    doc.text(`MEDIÇÃO POR PONTO · OBRA Nº ${numeroObra(obra)}`, M + L / 2, y + 4, { align: "center", baseline: "middle" });
     y += 10;
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(8);
@@ -574,7 +576,7 @@
         // com fotos: cada ponto (poste) na sua folha, com as fotos dele
         doc.addPage("a4", "portrait");
         y = TOPO;
-        tituloFolha(`OBRA Nº ${obra.numero} · MEDIÇÃO POR PONTO`);
+        tituloFolha(`OBRA Nº ${numeroObra(obra)} · MEDIÇÃO POR PONTO`);
       } else novaPagina(24);
       doc.setFillColor(...RGB.faixa);
       doc.rect(M, y, L, 7, "F");
@@ -652,7 +654,7 @@
         }
         if (altFoto < 40) altFoto = Math.min(largFoto * 4 / 3, 60); // muitas fotos: continua em outra folha do mesmo ponto
         for (let k = 0; k < nf; k += cols) {
-          if (novaPagina(altFoto + LEGENDA + 1)) tituloFolha(`${p.nome} (continuação) · OBRA Nº ${obra.numero}`);
+          if (novaPagina(altFoto + LEGENDA + 1)) tituloFolha(`${p.nome} (continuação) · OBRA Nº ${numeroObra(obra)}`);
           for (let j = 0; j < cols && k + j < nf; j++) {
             const foto = await Banco.obterFoto(p.fotos[k + j]);
             if (!foto) continue;

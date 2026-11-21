@@ -178,7 +178,7 @@
     if (tela === "inicio") {
       await recarregarLocais();
       estado.obra = null;
-      Object.assign(estado, { cqSel: null, cqNovo: null, cqMover: null, cqPag: 1 });
+      Object.assign(estado, { cqSel: null, cqNovo: null, cqMover: null, cqPag: 1, medFolha: null });
       liberarMiniaturas();
       if (Date.now() - (estado.remotasEm || 0) > 20000) buscarRemotas();
     }
@@ -1539,7 +1539,7 @@
         ${dica}
         ${pags > 1 ? `<div class="cq-folhas">
           <button type="button" data-acao="cq-pag" data-p="${pag - 1}" ${pag <= 1 ? "disabled" : ""} aria-label="Folha anterior">‹</button>
-          <span>Folha ${pag} de ${pags}<small>${plural(reais.filter((p) => p.croqui && (p.croqui.pag || 1) === pag).length, "ponto", "pontos")}</small></span>
+          <span>Folha ${pag} de ${pags}${o.projeto.folhas?.[pag] ? ` <small class="cq-folha-nome">${esc(rotuloFolha(o, pag))}</small>` : ""}<small>${plural(reais.filter((p) => p.croqui && (p.croqui.pag || 1) === pag).length, "ponto", "pontos")}</small></span>
           <button type="button" data-acao="cq-pag" data-p="${pag + 1}" ${pag >= pags ? "disabled" : ""} aria-label="Próxima folha">›</button>
         </div>` : ""}
         <div class="cq-controles">
@@ -2561,7 +2561,8 @@
 
   // ---------- medição
   function telaMedicao() {
-    const o = estado.obra;
+    const inteira = estado.obra;
+    const o = obraDaMedicao(inteira);
     const t = M.totaisObra(o);
     const secoes = M.estrutura(o.pontos);
     const semServico = M.pontosReais(o.pontos).filter((p) => !p.itens.length);
@@ -2578,6 +2579,7 @@
       ${topo("Medição", o.projeto ? "croqui" : "obra")}
       <div class="chips">
         <span class="chip-obra"><small>OBRA</small><b>${esc(o.numero)}</b></span>
+        ${o.folha ? `<span class="chip chip-folha">${esc(o.folha)}</span>` : ""}
         <span class="chip chip-total">Total <b>${M.fmtMoeda(t.valor)}</b></span>
         <span class="chip chip-us"><b>${M.fmtNum(t.us)}</b> US</span>
         <span class="chip">Execução <b>${esc(dataExec(o))}</b></span>
@@ -2585,8 +2587,9 @@
       ${semServico.length ? `<div class="faixa faixa-guardado">Sem serviço: ${esc(semServico.map((p) => p.nome).join(", "))}. Eles saem só no PDF, com as fotos.</div>` : ""}
       ${semFoto.length ? `<div class="faixa faixa-guardado">Sem foto: ${esc(semFoto.map((p) => p.nome).join(", "))}.</div>` : ""}
       <div class="medicao-colunas"><div class="medicao-col">
+      ${blocoFolhas(inteira)}
       <section class="cartao dados">
-        <b>Gerar arquivo</b>
+        <b>Gerar arquivo${o.folha ? ` · ${esc(o.folha)}` : ""}</b>
         <p class="sub">Mesma estrutura do fechamento simplificado do Termômetro. A planilha traz também uma aba com a medição de cada ponto; o PDF traz cada ponto com as fotos.</p>
         <div class="gerar">
           <button type="button" class="botao" data-acao="gerar-pdf" ${estado.gerando ? "disabled" : ""}>📄 PDF com fotos</button>
@@ -2608,6 +2611,56 @@
       </div></div>
     </div>`;
   }
+  // ---------- folhas do projeto: o número escrito na folha e, quando o número se repete
+  // (dois projetos na mesma obra, cada um com a sua "folha 1"), uma identificação
+  const dadosFolha = (o, pag) => o.projeto?.folhas?.[pag] || {};
+  const numFolha = (o, pag) => String(dadosFolha(o, pag).numero || pag).trim();
+  const identFolha = (o, pag) => String(dadosFolha(o, pag).ident || "").trim().toUpperCase();
+  const rotuloFolha = (o, pag) => `FOLHA ${numFolha(o, pag)}${identFolha(o, pag) ? " - " + identFolha(o, pag) : ""}`;
+  const totalFolhas = (o) => (o.projeto ? o.projeto.paginas || 1 : 0);
+  /** folhas do PDF cujo nome (número + identificação) repete o de outra */
+  const folhasRepetidas = (o) => {
+    const n = totalFolhas(o), vistos = new Map();
+    for (let pag = 1; pag <= n; pag++) vistos.set(rotuloFolha(o, pag), [...(vistos.get(rotuloFolha(o, pag)) || []), pag]);
+    return [...vistos.values()].filter((l) => l.length > 1).flat();
+  };
+  const naFolhaDoPdf = (p, pag) => !p.geral && p.croqui && (p.croqui.pag || 1) === pag;
+  /** a folha escolhida para a medição (null = a obra inteira) */
+  const folhaDaMedicao = (o) => (estado.medFolha && totalFolhas(o) > 1 && estado.medFolha <= totalFolhas(o) ? estado.medFolha : null);
+  /** a obra só com o que é da folha escolhida (os serviços sem ponto ficam na obra inteira) */
+  const obraDaMedicao = (o) => {
+    const f = folhaDaMedicao(o);
+    return f ? { ...o, pontos: o.pontos.filter((p) => naFolhaDoPdf(p, f)), folha: rotuloFolha(o, f), folhaPag: f } : o;
+  };
+
+  function blocoFolhas(o) {
+    const n = totalFolhas(o);
+    if (n < 2) return "";
+    const f = folhaDaMedicao(o), rep = folhasRepetidas(o), trava = soLeitura(o) ? "disabled" : "";
+    const qtd = (pag) => M.pontosReais(o.pontos).filter((p) => naFolhaDoPdf(p, pag) && (p.itens.length || p.fotos.length)).length;
+    const geral = o.pontos.find((p) => p.geral && p.itens.length);
+    const linhas = [];
+    for (let pag = 1; pag <= n; pag++) linhas.push(`<div class="folha-ident${rep.includes(pag) ? " repetida" : ""}">
+        <span class="folha-pdf">${pag}ª do PDF</span>
+        <label>Folha nº<input id="fl-num-${pag}" data-folha="${pag}" data-campo="numero" inputmode="numeric" value="${esc(numFolha(o, pag))}" ${trava}></label>
+        <label>Identificação<input id="fl-id-${pag}" data-folha="${pag}" data-campo="ident" value="${esc(identFolha(o, pag))}" placeholder="ex.: nº do projeto" ${trava}></label>
+      </div>`);
+    return `<section class="cartao dados">
+        <b>Medição de</b>
+        <div class="escolha-folha">
+          <button type="button" class="${!f ? "ativo" : ""}" data-acao="med-folha" data-p="0">Obra inteira</button>
+          ${Array.from({ length: n }, (_, k) => k + 1).map((pag) => `<button type="button" class="${f === pag ? "ativo" : ""}" data-acao="med-folha" data-p="${pag}">${esc(rotuloFolha(o, pag))}<small>${plural(qtd(pag), "ponto", "pontos")}</small></button>`).join("")}
+        </div>
+        ${f && geral ? `<p class="sub">Os serviços sem ponto saem só na medição da obra inteira.</p>` : ""}
+        <details class="folhas-ident"${rep.length ? " open" : ""}>
+          <summary>Identificar as folhas</summary>
+          <p class="sub">Coloque o número que está escrito em cada folha. Quando o número se repete (são projetos diferentes na mesma obra), escreva a identificação de cada um.</p>
+          ${rep.length ? `<p class="faixa faixa-guardado">Folhas com o mesmo nome: ${esc([...new Set(rep.map((pag) => rotuloFolha(o, pag)))].join(", "))}. Escreva a identificação para separar.</p>` : ""}
+          ${linhas.join("")}
+        </details>
+      </section>`;
+  }
+
   const dataExec = (o) => {
     const dias = o.pontos.filter((p) => p.itens.length && p.dia).map((p) => p.dia).sort();
     return dias.length ? M.fmtDia(dias[dias.length - 1]) : "—";
@@ -3063,6 +3116,8 @@
       }
       // folhas acrescentadas: as que já existiam continuam giradas como estavam
       const giros = pn.modo === "adicionar" && o.projeto?.giros ? { giros: o.projeto.giros } : {};
+      // folhas acrescentadas: as que já existiam guardam o número e a identificação
+      if (pn.modo === "adicionar" && o.projeto?.folhas) giros.folhas = o.projeto.folhas;
       o.projeto = { nome: pn.nome, tipo: pn.tipo, tamanho: pn.blob.size, em, ...(pn.paginas ? { paginas: pn.paginas } : {}), ...giros };
       if (pn.modo !== "adicionar") o.anotacoes = null; // projeto trocado: as anotações eram do antigo
       o.rotulos = null; // arquivo novo (até com folhas acrescentadas): os (P) são lidos de novo
@@ -3138,7 +3193,8 @@
     try {
       // a medição é do que foi feito: os pontos achados no projeto e ainda sem nada lançado
       // (serviço, foto ou observação) ficam de fora da planilha, do PDF e do croqui do PDF
-      const o = { ...estado.obra, pontos: estado.obra.pontos.filter((p) => p.itens.length || p.fotos.length || (p.obs || "").trim()) };
+      const escolhida = obraDaMedicao(estado.obra);
+      const o = { ...escolhida, pontos: escolhida.pontos.filter((p) => p.itens.length || p.fotos.length || (p.obs || "").trim()) };
       if (tipo === "pdf") {
         // fotos que estão só no banco: baixa antes de montar o PDF
         let faltando = 0;
@@ -3151,7 +3207,7 @@
       if (tipo !== "xlsx" && o.projeto) {
         try {
           const proj = await garantirProjeto(o);
-          if (proj) croqui = await Croqui.paraPdf(o, proj, { recortes: tipo === "pdf" });
+          if (proj) croqui = await Croqui.paraPdf(o, proj, { recortes: tipo === "pdf", soPag: o.folhaPag || null });
           else avisar("O projeto não está neste celular: o PDF sai sem o croqui.", "erro");
         } catch (e) {
           console.error(e);
@@ -3673,6 +3729,10 @@
         return render();
       }
       case "medicao": return irPara("medicao");
+      case "med-folha":
+        estado.medFolha = Number(alvo.dataset.p) || null;
+        estado.arquivo = null;
+        return render();
       case "gerar-pdf": return gerar("pdf");
       case "gerar-pdf-sem": return gerar("pdf-sem");
       case "gerar-xlsx": return gerar("xlsx");
@@ -3765,6 +3825,18 @@
       // do resumo do ponto no croqui: as fotos vão para o ponto escolhido, sem abrir a tela dele
       if (t.dataset.ponto) estado.pontoId = t.dataset.ponto;
       return receberFotos(arquivos, t.dataset.origem || "galeria");
+    }
+    if (t.dataset.folha && t.dataset.campo && estado.obra?.projeto && !soLeitura(estado.obra)) {
+      const o = estado.obra, pag = Number(t.dataset.folha);
+      const fl = (o.projeto.folhas = o.projeto.folhas || {});
+      const d = (fl[pag] = { ...(fl[pag] || {}) });
+      const v = t.value.trim();
+      if (t.dataset.campo === "numero") d.numero = v && v !== String(pag) ? v : "";
+      else d.ident = v.toUpperCase();
+      if (!d.numero && !d.ident) delete fl[pag];
+      estado.arquivo = null;
+      salvarAgora();
+      return render();
     }
     if (t.dataset.acao === "copia-fotos") {
       try { localStorage.setItem("croqui_copia_fotos", t.checked ? "sim" : "nao"); } catch (err) { /* sem espaço */ }

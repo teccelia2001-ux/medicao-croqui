@@ -1218,3 +1218,18 @@ body { max-width: 100vw; }
 .modo-aparelho button.ativo { background: #fff; color: var(--vermelho); box-shadow: 0 1px 4px rgba(15, 23, 42, 0.18); }
 .faixa-fotos { margin: 0; background: #ecfeff; color: #155e75; line-height: 1.4; }
 .selo-fotos { background: #cffafe; color: #155e75; }
+
+/* medição por folha: escolha da folha e identificação das folhas de número repetido */
+.chip-folha { background: #fef3c7; border-color: #fde68a; color: #92400e; font-weight: 700; }
+.escolha-folha { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; margin-top: 8px; }
+.escolha-folha button { min-height: 44px; padding: 6px 8px; border: 1px solid var(--borda-campo); border-radius: 10px; background: #fff; color: #475569; font-weight: 700; font-size: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; overflow-wrap: anywhere; }
+.escolha-folha button small { font-size: 11px; font-weight: 600; color: var(--suave); }
+.escolha-folha .ativo { border-color: var(--vermelho); background: #fff1f1; color: var(--vermelho); }
+.folhas-ident { margin-top: 10px; }
+.folhas-ident summary { cursor: pointer; font-weight: 700; color: #334155; padding: 6px 0; }
+.folha-ident { display: grid; grid-template-columns: auto 80px 1fr; gap: 8px; align-items: end; padding: 8px 0; border-top: 1px solid var(--borda); }
+.folha-ident.repetida input { border-color: #f59e0b; background: #fffbeb; }
+.folha-ident .folha-pdf { font-size: 13px; font-weight: 700; color: var(--suave); padding-bottom: 12px; white-space: nowrap; }
+.folha-ident label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--suave); min-width: 0; }
+.folha-ident input { width: 100%; min-height: 40px; padding: 6px 8px; border: 1px solid var(--borda-campo); border-radius: 8px; background: var(--campo); font: inherit; font-size: 15px; color: var(--texto); }
+.cq-folhas span small.cq-folha-nome { color: #92400e; font-weight: 700; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

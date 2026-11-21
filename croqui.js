@@ -1001,10 +1001,11 @@
   /** Imagens do croqui para o PDF da medição: cada folha do projeto que tem ponto (a 1ª
    *  sempre) com todos os pontos marcados e, com `recortes`, um pedaço do croqui em volta
    *  de cada ponto, com ele em destaque. */
-  async function paraPdf(obra, proj, { recortes = true } = {}) {
-    const pontos = (obra.pontos || []).filter((p) => !p.geral && p.croqui);
+  async function paraPdf(obra, proj, { recortes = true, soPag = null } = {}) {
+    const pontos = (obra.pontos || []).filter((p) => !p.geral && p.croqui && (!soPag || (p.croqui.pag || 1) === soPag));
     const total = await paginas(proj);
-    const pags = [...new Set([1, ...pontos.map((p) => p.croqui.pag || 1)])].filter((n) => n <= total).sort((a, b) => a - b);
+    // medição de uma folha só: só ela; da obra inteira: as folhas com ponto (a 1ª sempre)
+    const pags = soPag ? [soPag].filter((n) => n <= total) : [...new Set([1, ...pontos.map((p) => p.croqui.pag || 1)])].filter((n) => n <= total).sort((a, b) => a - b);
     const marcasDa = (pag, destaque) => pontos.filter((p) => (p.croqui.pag || 1) === pag).map((p) => ({
       nome: p.nome, x: p.croqui.x, y: p.croqui.y,
       cor: p === destaque ? COR_DESTAQUE : p.itens.length ? COR_COM : COR_SEM, destaque: p === destaque,
