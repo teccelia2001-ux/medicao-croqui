@@ -795,7 +795,7 @@
       </section>
       ${p.admin ? `<section class="cartao dados">
         <b>Supervisores</b>
-        <p class="sub">Para criar a conta de um supervisor ou trocar a senha, use o <b>Painel › 👥 Usuários</b>. Aqui dá para ajustar o nome que sai na medição e o acesso.</p>
+        <p class="sub">Para criar a conta de um supervisor ou trocar a senha, use o <b>Painel › ⚙ Ajustes</b>. Aqui dá para ajustar o nome que sai na medição e o acesso.</p>
         ${sups === null ? `<p class="vazio">Carregando…</p>` : sups.map((s) => `<div class="sup-linha">
           <input value="${esc(s.nome)}" data-sup-nome="${s.user_id}" aria-label="Nome de ${esc(s.email)}">
           <small class="sub">${esc(s.email)}</small>

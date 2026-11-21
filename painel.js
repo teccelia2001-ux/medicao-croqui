@@ -25,14 +25,16 @@
     perfil: null,
     obras: null, // linhas de medicao_obras_lista
     usuarios: null, // medicao_supervisores (administrador)
-    telaUsuarios: false,
     senhaDe: null, // usuário com o campo de nova senha aberto
     filtro: { busca: "", supervisor: "", cidade: "", de: "", ate: "" },
     ordem: { campo: "atualizada_em", desc: true },
     aberta: null, // obra completa aberta na gaveta
     fotos: new Map(), // fotoId -> objectURL
     gerando: false,
+    aba: (() => { try { return localStorage.getItem("painel_aba") || "obras"; } catch (e) { return "obras"; } })(), // obras | projetos | ajustes
+    baixandoProj: null, // obra com o projeto sendo baixado
   };
+  const ABAS = [["obras", "📋", "Obras medidas", "Obras"], ["projetos", "🗺", "Projetos", "Projetos"], ["ajustes", "⚙", "Ajustes", "Ajustes"]];
 
   // ------------------------------------------------------------------ dados
   async function carregar(avisando = false) {
@@ -109,6 +111,38 @@
     } catch (e) {
       return local || null;
     }
+  }
+
+  /** o arquivo do projeto (croqui) da obra: abre numa aba nova ou baixa */
+  async function arquivoProjeto(id, modo) {
+    if (estado.baixandoProj) return;
+    const janela = modo === "ver" ? window.open("", "_blank") : null; // aberta já no clique (senão o navegador bloqueia)
+    estado.baixandoProj = id;
+    render();
+    avisar("Baixando o projeto…", "guardado");
+    try {
+      const r = await Nuvem.baixarObra(id);
+      if (!r?.projeto) throw new Error("Essa obra não tem projeto anexado.");
+      const proj = await projeto(obraDaLinha(r, estado.obras));
+      if (!proj) throw new Error("Não deu para baixar o projeto.");
+      const url = URL.createObjectURL(proj.blob);
+      if (janela) janela.location = url;
+      else {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = proj.nome || `PROJETO OBRA ${r.numero}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 120000);
+      $aviso.hidden = true;
+    } catch (e) {
+      janela?.close();
+      avisar(e.message, "erro");
+    }
+    estado.baixandoProj = null;
+    render();
   }
 
   async function abrir(id) {
@@ -199,7 +233,6 @@
   }
 
   function usuariosHtml() {
-    if (!estado.telaUsuarios) return "";
     const eu = estado.perfil?.user_id;
     const obrasDe = (id) => (estado.obras || []).filter((o) => o.supervisor_id === id).length;
     const lista = estado.usuarios === null ? `<p class="vazio">Carregando…</p>`
@@ -214,11 +247,8 @@
           ? `<form class="nova-senha" data-senha="${u.user_id}"><input type="password" id="nova-senha" minlength="6" placeholder="Nova senha (6+)" autocomplete="new-password" required><button class="mini">Salvar</button><button type="button" class="mini" data-acao="cancelar-senha">Cancelar</button></form>`
           : `<button type="button" class="mini" data-acao="abrir-senha" data-id="${u.user_id}">Trocar senha</button>`}
       </div>`).join("");
-    return `<div class="fundo" data-acao="fechar-usuarios">
-      <aside class="gaveta" data-parar>
-        <div class="gaveta-topo"><h2>Usuários e acessos</h2><span class="espaco"></span>
-          <button type="button" class="fechar" data-acao="fechar-usuarios" aria-label="Fechar">×</button></div>
-        <div class="gaveta-corpo">
+    return `<section class="bloco-ajuste">
+          <h2 class="titulo-ajuste">👥 Usuários e acessos</h2>
           <form class="novo-usuario" id="form-usuario">
             <b>Novo usuário</b>
             <div class="novo-campos">
@@ -231,9 +261,7 @@
             <small class="dica">O usuário entra no app e no painel com esse e-mail e senha. Administrador também cria usuários e muda acessos. Desativado não entra mais e não vê nada.</small>
           </form>
           <div class="cartao">${lista || `<p class="vazio">Nenhum usuário.</p>`}</div>
-        </div>
-      </aside>
-    </div>`;
+      </section>`;
   }
 
   // ------------------------------------------------------------------ telas
@@ -259,7 +287,7 @@
     return `<th data-ordem="${campo}" class="${num ? "num" : ""}">${texto}${seta}</th>`;
   }
 
-  function telaPainel() {
+  function abaObras() {
     const todas = estado.obras || [];
     const lista = filtradas();
     const f = estado.filtro;
@@ -277,20 +305,7 @@
         </div></td>
       </tr>`).join("");
 
-    return `<header class="barra">
-        <img src="logo-teccel-red.png" alt="Teccel">
-        <h1>Painel da medição por croqui</h1>
-        <span class="espaco"></span>
-        <span class="quem">${esc(estado.perfil?.nome || "")}</span>
-        ${estado.perfil?.admin ? `<button type="button" class="link" data-acao="usuarios">👥 Usuários</button>` : ""}
-        <nav class="troca" aria-label="Trocar entre app e painel"><a href="./">📱 App</a><span class="ativo">📊 Painel</span></nav>
-        <button type="button" class="link" data-acao="sair">Sair</button>
-      </header>
-      <main class="conteudo">
-        <section class="filtros">
-          <label class="busca">Pesquisar obra <input id="f-busca" type="search" value="${esc(f.busca)}" placeholder="Número da obra, cidade ou supervisor"></label>
-          <button type="button" class="mini" data-acao="atualizar">⟳ Atualizar</button>
-        </section>
+    return `${pesquisa()}
           <section class="cartao">
             <h2>Obras medidas <small>${lista.length === todas.length ? `${todas.length}` : `${lista.length} de ${todas.length}`}</small></h2>
             <div class="rolagem"><table>
@@ -298,10 +313,84 @@
               <tbody>${linhas}</tbody>
             </table></div>
             ${estado.obras === null ? `<p class="vazio">Carregando…</p>` : !lista.length ? `<p class="vazio">Nenhuma obra ${todas.length ? "encontrada" : "medida ainda"}.</p>` : ""}
-          </section>
-      </main>
-      ${gavetaHtml()}
-      ${usuariosHtml()}`;
+          </section>`;
+  }
+
+  const pesquisa = () => `<section class="filtros">
+      <label class="busca">Pesquisar obra <input id="f-busca" type="search" value="${esc(estado.filtro.busca)}" placeholder="Número da obra, cidade ou supervisor"></label>
+      <button type="button" class="mini" data-acao="atualizar">⟳ Atualizar</button>
+    </section>`;
+  const comProjeto = (lista) => lista.filter((o) => o.tem_projeto !== false);
+
+  function abaProjetos() {
+    const todas = comProjeto(estado.obras || []);
+    const lista = comProjeto(filtradas());
+    const linhas = lista.map((o) => `<tr>
+        <td><span class="chip-obra">${esc(o.numero)}</span></td>
+        <td>${esc(o.municipio || "—")}</td>
+        <td>${esc(o.supervisor_nome || "—")}</td>
+        <td class="num">${o.qtd_pontos}</td>
+        <td>${M.fmtHora(o.atualizada_em)}</td>
+        <td><div class="acoes">
+          <button type="button" class="mini" data-projeto="ver" data-id="${o.id}" ${estado.baixandoProj ? "disabled" : ""}>${estado.baixandoProj === o.id ? "Baixando…" : "👁 Abrir"}</button>
+          <button type="button" class="mini" data-projeto="baixar" data-id="${o.id}" ${estado.baixandoProj ? "disabled" : ""}>⬇ Baixar</button>
+          <button type="button" class="mini" data-abrir-obra="${o.id}">Ver obra</button>
+        </div></td>
+      </tr>`).join("");
+    return `${pesquisa()}
+      <section class="cartao">
+        <h2>Projetos das obras <small>${lista.length === todas.length ? `${todas.length}` : `${lista.length} de ${todas.length}`}</small></h2>
+        <div class="rolagem"><table>
+          <thead><tr>${th("numero", "Obra")}${th("municipio", "Cidade")}${th("supervisor_nome", "Supervisor")}${th("qtd_pontos", "Pontos", true)}${th("atualizada_em", "Alterada em")}<th>Projeto (croqui)</th></tr></thead>
+          <tbody class="sem-clique">${linhas}</tbody>
+        </table></div>
+        ${estado.obras === null ? `<p class="vazio">Carregando…</p>` : !lista.length ? `<p class="vazio">Nenhum projeto ${todas.length ? "encontrado" : "anexado ainda"}.</p>` : ""}
+        <p class="dica dica-cartao">O projeto é o PDF (ou foto) que o supervisor anexou na obra, como foi enviado. A medição com o croqui marcado sai no PDF da aba Obras medidas.</p>
+      </section>`;
+  }
+
+  function abaAjustes() {
+    const p = estado.perfil || {};
+    const v = self.VERSAO_APP || {};
+    return `<section class="bloco-ajuste">
+        <h2 class="titulo-ajuste">👤 Sua conta</h2>
+        <div class="cartao cartao-ajuste">
+          <p><b>${esc(p.nome || "")}</b> · ${esc(p.email || "")}${p.admin ? " · administrador" : ""}</p>
+          <p class="dica">Mesmo acesso do app. O nome que sai na medição é o do cadastro.</p>
+          <button type="button" class="botao botao-claro" data-acao="sair">Sair da conta</button>
+        </div>
+      </section>
+      ${p.admin ? usuariosHtml() : ""}
+      <section class="bloco-ajuste">
+        <h2 class="titulo-ajuste">ℹ Versão</h2>
+        <div class="cartao cartao-ajuste">
+          <p>Painel na <b>versão ${esc(v.numero ?? "—")}</b>${v.data ? ` · de ${esc(v.data)}` : ""}.</p>
+          <p class="dica">Para pegar uma versão nova, recarregue a página (Ctrl+F5).</p>
+        </div>
+      </section>`;
+  }
+
+  function telaPainel() {
+    const n = (estado.obras || []).length, np = comProjeto(estado.obras || []).length;
+    const conta = { obras: estado.obras ? n : "", projetos: estado.obras ? np : "", ajustes: "" };
+    const corpo = estado.aba === "projetos" ? abaProjetos() : estado.aba === "ajustes" ? abaAjustes() : abaObras();
+    return `<header class="barra">
+        <img src="logo-teccel-red.png" alt="Teccel">
+        <h1>Painel da medição por croqui</h1>
+        <span class="espaco"></span>
+        <span class="quem">${esc(estado.perfil?.nome || "")}</span>
+        <nav class="troca" aria-label="Trocar entre app e painel"><a href="./">📱 App</a><span class="ativo">📊 Painel</span></nav>
+      </header>
+      <div class="corpo">
+        <nav class="lateral" aria-label="Abas do painel">
+          ${ABAS.map(([id, ic, nome, curto]) => `<button type="button" class="lateral-aba${estado.aba === id ? " ativa" : ""}" data-aba="${id}" ${estado.aba === id ? 'aria-current="page"' : ""}>
+            <span class="lateral-icone">${ic}</span><span class="lateral-nome">${nome}</span><span class="lateral-curto">${curto}</span>${conta[id] !== "" ? `<small>${conta[id]}</small>` : ""}</button>`).join("")}
+          <span class="espaco"></span>
+          <button type="button" class="lateral-aba lateral-sair" data-acao="sair"><span class="lateral-icone">⎋</span><span class="lateral-nome">Sair</span></button>
+        </nav>
+        <main class="conteudo">${corpo}</main>
+      </div>
+      ${gavetaHtml()}`;
   }
 
   function gavetaHtml() {
@@ -385,11 +474,24 @@
     estado.perfil = null;
     estado.obras = null;
     estado.aberta = null;
+    estado.usuarios = null;
     render();
   }
 
   // ------------------------------------------------------------------ eventos
   $p.addEventListener("click", (e) => {
+    const aba = e.target.closest("[data-aba]");
+    if (aba) {
+      estado.aba = aba.dataset.aba;
+      try { localStorage.setItem("painel_aba", estado.aba); } catch (err) { /* sem espaço */ }
+      render();
+      if (estado.aba === "ajustes" && estado.perfil?.admin && estado.usuarios === null) carregarUsuarios();
+      return;
+    }
+    const pj = e.target.closest("[data-projeto]");
+    if (pj) return arquivoProjeto(pj.dataset.id, pj.dataset.projeto);
+    const vo = e.target.closest("[data-abrir-obra]");
+    if (vo) return abrir(vo.dataset.abrirObra);
     const g = e.target.closest("[data-gerar]");
     if (g) {
       e.stopPropagation();
@@ -414,21 +516,12 @@
     if (linha) return abrir(linha.dataset.abrir);
     const acao = e.target.closest("[data-acao]");
     if (!acao) return;
-    if (["fechar", "fechar-usuarios"].includes(acao.dataset.acao) && e.target.closest("[data-parar]") && !e.target.closest(".fechar")) return;
+    if (acao.dataset.acao === "fechar" && e.target.closest("[data-parar]") && !e.target.closest(".fechar")) return;
     switch (acao.dataset.acao) {
       case "fechar":
         estado.aberta = null;
         return render();
       case "sair": return sair();
-      case "usuarios":
-        estado.telaUsuarios = true;
-        estado.usuarios = null;
-        render();
-        return carregarUsuarios();
-      case "fechar-usuarios":
-        estado.telaUsuarios = false;
-        estado.senhaDe = null;
-        return render();
       case "abrir-senha":
         estado.senhaDe = acao.dataset.id;
         render();
@@ -544,6 +637,7 @@
     }
     render();
     carregar();
+    if (estado.aba === "ajustes" && estado.perfil?.admin) carregarUsuarios();
   }
   iniciar();
 })();

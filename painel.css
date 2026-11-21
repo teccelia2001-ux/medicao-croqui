@@ -205,3 +205,52 @@ tbody tr.aberta { background: #ffecec; }
 .troca a, .troca span { padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; white-space: nowrap; text-decoration: none; color: #475569; }
 .troca .ativo { background: var(--vermelho); color: #fff; }
 .troca a:hover { color: var(--vermelho); }
+
+/* barra lateral: Obras medidas, Projetos e Ajustes */
+.corpo { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: calc(100vh - 47px); }
+.lateral {
+  position: sticky; top: 47px; align-self: start; height: calc(100vh - 47px);
+  display: flex; flex-direction: column; gap: 4px; padding: 16px 10px;
+  background: #fff; border-right: 1px solid var(--borda);
+}
+.lateral .espaco { flex: 1; }
+.lateral-aba {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; padding: 8px 12px;
+  border: 0; border-radius: 10px; background: none; color: #334155; font-weight: 600; text-align: left;
+}
+.lateral-aba:hover { background: #f1f5f9; color: var(--texto); }
+.lateral-aba.ativa { background: #fff1f1; color: var(--vermelho); box-shadow: inset 3px 0 0 var(--vermelho); }
+.lateral-icone { width: 22px; text-align: center; font-size: 16px; }
+.lateral-nome { flex: 1; }
+.lateral-aba small { min-width: 24px; padding: 1px 7px; border-radius: 999px; background: #eef2f7; color: #475569; font-size: 12px; font-weight: 700; text-align: center; }
+.lateral-aba.ativa small { background: #fecaca; color: #991b1b; }
+.lateral-sair { color: var(--suave); }
+.corpo .conteudo { max-width: 1400px; width: 100%; margin: 0; }
+tbody.sem-clique tr { cursor: default; }
+tbody.sem-clique tr:hover { background: transparent; }
+.dica-cartao { margin: 0; padding: 10px 16px 14px; }
+.bloco-ajuste { display: flex; flex-direction: column; gap: 10px; }
+.titulo-ajuste { margin: 0; font-size: 15px; }
+.cartao-ajuste { padding: 14px 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.cartao-ajuste p { margin: 0; }
+@media (max-width: 700px) {
+  .corpo { grid-template-columns: 1fr; min-height: 0; }
+  .lateral { position: sticky; top: 0; z-index: 4; height: auto; flex-direction: row; gap: 4px; padding: 6px 10px; border-right: 0; border-bottom: 1px solid var(--borda); overflow-x: auto; }
+  .lateral .espaco { display: none; }
+  .lateral-aba { width: auto; flex: 0 0 auto; min-height: 38px; padding: 6px 10px; }
+  .lateral-aba.ativa { box-shadow: inset 0 -3px 0 var(--vermelho); }
+  .barra { position: static; }
+}
+@media (max-width: 700px) {
+  /* as três abas cabem lado a lado; o Sair fica em Ajustes */
+  .lateral { overflow-x: visible; padding: 6px 8px; }
+  .lateral-aba { flex: 1 1 0; min-width: 0; justify-content: center; gap: 5px; padding: 6px 4px; font-size: 13px; }
+  .lateral-icone { width: auto; font-size: 15px; }
+  .lateral-nome { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lateral-aba small, .lateral-sair { display: none; }
+}
+.lateral-curto { display: none; }
+@media (max-width: 700px) {
+  .lateral-aba .lateral-nome { display: none; }
+  .lateral-aba .lateral-curto { display: inline; white-space: nowrap; }
+}
