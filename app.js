@@ -574,6 +574,7 @@
     desenhada = { tela: estado.tela, ponto: estado.pontoId };
     document.body.classList.toggle("com-croqui", estado.tela === "croqui");
     if (estado.tela === "croqui") { montarCroqui(); acimaDaBarra(); }
+    if (estado.tela === "obra") conferirFotosSemPonto(estado.obra);
     if (tecladoDoApp()) document.querySelectorAll("input[data-num]").forEach((i) => i.setAttribute("inputmode", "none"));
     if (vendoPonto()) {
       const p = ponto();
@@ -913,6 +914,94 @@
   }
 
   // ---------- obra (pontos)
+  // ---------- remontar a obra pelas fotos
+  /* A obra 0032601406 perdeu os pontos no banco (23/11/2026). As fotos tiradas neste aparelho
+     continuam guardadas aqui, cada uma com o ponto (pontoId) e a faixa escrita
+     ("OBRA 0032601406 · P5", data, UTM). Foto que não está em nenhum ponto da obra: o ponto
+     dela volta (nome, fotos, UTM e data, no lugar do (P) dele no croqui). Os serviços não
+     voltam: só existiam na obra apagada. */
+  let orfasDe = { obraId: null, grupos: [], em: 0 };
+  /** fotos deste aparelho, desta obra, que não estão em nenhum ponto, juntas por ponto */
+  async function gruposSemPonto(o) {
+    const fotos = await Banco.fotosDaObra(o.id);
+    const usadas = new Set(o.pontos.flatMap((p) => [...(p.fotos || []), ...(p.fotos_fora || [])]));
+    const existem = new Set(o.pontos.map((p) => p.id));
+    const fora = new Set(o.pontos_fora || []);
+    const grupos = new Map();
+    for (const f of fotos) {
+      if (usadas.has(f.id)) continue;
+      const pid = f.pontoId || (String(f.id).includes("__") ? String(f.id).split("__")[0] : null);
+      if (!pid || fora.has(pid)) continue;
+      const linha = String(f.faixa || "").split("\n")[0];
+      const nome = linha.includes("·") ? linha.split("·").slice(1).join("·").trim() : "";
+      if (!grupos.has(pid)) grupos.set(pid, { pontoId: pid, nome: "", fotos: [], gps: null, dia: "", existe: existem.has(pid) });
+      const g = grupos.get(pid);
+      g.fotos.push(f);
+      if (nome && !g.nome) g.nome = nome;
+      if (f.gps && !g.gps) g.gps = f.gps;
+      const dia = (f.criada_em || "").slice(0, 10);
+      if (dia && (!g.dia || dia < g.dia)) g.dia = dia;
+    }
+    for (const g of grupos.values()) g.fotos.sort((x, y) => String(x.criada_em || "").localeCompare(String(y.criada_em || "")));
+    return [...grupos.values()].sort((x, y) => String(x.nome).localeCompare(String(y.nome), "pt-BR", { numeric: true }));
+  }
+  async function conferirFotosSemPonto(o) {
+    if (!o || soLeitura(o)) return;
+    if (orfasDe.obraId === o.id && Date.now() - orfasDe.em < 4000) return;
+    const antes = orfasDe.obraId === o.id ? orfasDe.grupos.length : -1;
+    orfasDe = { obraId: o.id, grupos: await gruposSemPonto(o), em: Date.now() };
+    if (orfasDe.grupos.length !== antes && estado.tela === "obra" && estado.obra?.id === o.id) render();
+  }
+  function faixaRemontar(o) {
+    if (soLeitura(o) || orfasDe.obraId !== o.id || !orfasDe.grupos.length) return "";
+    const n = orfasDe.grupos.reduce((t, g) => t + g.fotos.length, 0);
+    const novos = orfasDe.grupos.filter((g) => !g.existe).length;
+    return `<div class="faixa faixa-guardado faixa-remontar">
+      <span>📷 <b>${plural(n, "foto deste aparelho não está", "fotos deste aparelho não estão")} em nenhum ponto</b>${novos ? ` (${plural(novos, "ponto que não existe mais", "pontos que não existem mais")} na obra)` : ""}.</span>
+      <button type="button" class="botao botao-pequeno" data-acao="remontar-fotos">Remontar os pontos pelas fotos</button>
+    </div>`;
+  }
+  /** lugar do (P) com esse nome no croqui (leitura do projeto guardada) */
+  async function lugarDoRotulo(o, nome) {
+    const alvo = String(nome || "").trim().toUpperCase();
+    if (!alvo || !o.projeto) return null;
+    const em = o.projeto.em || "";
+    const local = (await todosRotulos())[o.id];
+    const pags = (local && local.em === em ? local.pags : null) || (o.rotulos?.em === em ? o.rotulos.pags : null) || {};
+    for (const [pag, lista] of Object.entries(pags)) {
+      const r = (lista || []).find((x) => String(x.nome || "").toUpperCase() === alvo);
+      if (r) return { pag: Number(pag) || 1, x: r.x, y: r.y };
+    }
+    return null;
+  }
+  async function remontarPelasFotos() {
+    const o = estado.obra;
+    if (!o || soLeitura(o)) return;
+    const grupos = await gruposSemPonto(o);
+    if (!grupos.length) return avisar("Todas as fotos deste aparelho já estão nos pontos.");
+    const novos = grupos.filter((g) => !g.existe);
+    const lista = grupos.slice(0, 40).map((g) => `${g.nome || "(sem nome)"}: ${plural(g.fotos.length, "foto", "fotos")}${g.existe ? " (o ponto existe)" : ""}`).join("\n");
+    if (!confirm(`Remontar ${plural(novos.length, "ponto", "pontos")} e devolver as fotos aos pontos:\n\n${lista}${grupos.length > 40 ? "\n…" : ""}\n\nOs serviços lançados não voltam (só existiam na obra apagada): lance de novo olhando as fotos.`)) return;
+    let criados = 0, fotos = 0, semLugar = 0;
+    for (const g of grupos) {
+      let p = o.pontos.find((x) => x.id === g.pontoId);
+      if (!p) {
+        const nome = g.nome || proximoNome(o);
+        p = { id: g.pontoId, nome, dia: g.dia || hoje(), obs: "", gps: g.gps || null, itens: [], fotos: [] };
+        const lugar = await lugarDoRotulo(o, nome);
+        if (lugar) p.croqui = { pag: lugar.pag, x: arred(lugar.x), y: arred(lugar.y) };
+        else if (o.projeto) semLugar++;
+        o.pontos.push(p);
+        criados++;
+      }
+      for (const f of g.fotos) if (!p.fotos.includes(f.id)) { p.fotos.push(f.id); fotos++; }
+    }
+    await salvarAgora();
+    orfasDe = { obraId: null, grupos: [], em: 0 };
+    avisar(`${plural(criados, "ponto remontado", "pontos remontados")} com ${plural(fotos, "foto", "fotos")}.${semLugar ? ` ${plural(semLugar, "ponto ficou", "pontos ficaram")} fora do croqui: abra ${semLugar === 1 ? "o ponto" : "cada um"} e use "Marcar no croqui".` : ""} Agora lance os serviços de novo.`, "ok", 10000);
+    render();
+  }
+
   function telaObra() {
     const o = estado.obra;
     const t = M.totaisObra(o);
@@ -948,6 +1037,7 @@
       ${modoFotos() ? `<div class="faixa faixa-fotos">📷 Modo só fotos: toque num ponto para tirar as fotos dele.</div>`
         : deOutro(o) ? `<div class="faixa faixa-consulta">Obra de ${esc(o.supervisor_nome || "outro supervisor")}: aberta só para consulta e para gerar a medição.</div>` : ""}
       ${o.erro_envio ? `<div class="erro">O banco recusou o envio: ${esc(o.erro_envio)}</div>` : ""}
+      ${faixaRemontar(o)}
       <div class="chips">
         <span class="chip-obra"><small>OBRA</small><b>${esc(o.numero)}</b></span>
         <span class="chip chip-total">Total <b>${M.fmtMoeda(t.valor)}</b></span>
@@ -3803,6 +3893,7 @@
         return;
       }
 
+      case "remontar-fotos": return remontarPelasFotos();
       case "excluir-foto": {
         if (soLeitura(o) || !confirm("Tirar esta foto do ponto? Ela sai da medição, mas continua guardada no celular e no banco.")) return;
         const p = ponto();
