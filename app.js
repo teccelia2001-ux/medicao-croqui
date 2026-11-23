@@ -591,7 +591,7 @@
   const ROLAM = ".ponto-col, .medicao-col, .cq-painel";
 
   function render() {
-    const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao, conta: telaConta };
+    const telas = { entrar: telaEntrar, carregando: telaCarregando, inicio: telaInicio, "obra-form": telaObraForm, croqui: telaCroqui, obra: telaObra, ponto: telaPonto, medicao: telaMedicao, conta: telaConta, copias: telaCopias };
     const mesma = desenhada.tela === estado.tela && desenhada.ponto === estado.pontoId;
     const colunas = mesma ? [...$app.querySelectorAll(ROLAM)].map((c) => c.scrollTop) : null;
     const pagina = window.scrollY;
@@ -870,6 +870,7 @@
             : estado.remotas === null && estado.online ? `<p class="vazio">Carregando as obras do banco…</p>`
               : `<p class="vazio">Nenhuma obra ainda. Toque em <b>Nova obra</b> para começar.</p>`)}</div>
       </section>
+      <button type="button" class="link link-copias" data-acao="copias">🗂 Cópias de segurança e backup</button>
     </div>`;
   }
 
@@ -889,7 +890,121 @@
               <span>Salvar uma cópia de cada foto tirada no celular <small>(pasta Download, aparece na galeria)</small></span></label>`}
         <button type="button" class="botao botao-perigo" data-acao="sair">Sair da conta</button>
       </section>
+      <section class="cartao dados">
+        <b>🗂 Cópias de segurança</b>
+        <p class="sub">Cópias de cada obra guardadas neste aparelho, para voltar se der algum erro, e o backup em arquivo.</p>
+        <button type="button" class="botao" data-acao="copias">Ver as cópias e o backup</button>
+      </section>
     </div>`;
+  }
+
+  // ---------- cópias de segurança (banco.js guarda sozinho) e backup em arquivo
+  const MOTIVO_COPIA = { "automática": "enquanto trabalhava", "do banco": "junto com o banco", "antes de restaurar": "antes de restaurar outra", arquivo: "veio de um arquivo" };
+  async function abrirCopias(obraId = null) {
+    await Banco.copiasProntas();
+    const lista = await Banco.listarCopias(obraId || undefined);
+    estado.copias = { de: obraId, lista: lista.sort((x, y) => String(y.em).localeCompare(String(x.em))), abertas: new Set(obraId ? [obraId] : []) };
+    return irPara("copias");
+  }
+  function telaCopias() {
+    const c = estado.copias || { lista: [], abertas: new Set() };
+    const voltar = c.de && estado.obra?.id === c.de ? "obra" : "inicio";
+    const locais = new Map(estado.obras.map((o) => [o.id, o]));
+    const grupos = new Map();
+    for (const x of c.lista) {
+      if (!grupos.has(x.obraId)) grupos.set(x.obraId, []);
+      grupos.get(x.obraId).push(x);
+    }
+    const linha = (x, maior) => {
+      const r = x.resumo || {};
+      const outro = deOutro(x.obra);
+      return `<div class="copia${x === maior ? " copia-maior" : ""}">
+        <div><b>${esc(M.fmtHora(x.em))}</b>${x === maior ? ` <span class="copia-selo">⭐ a mais completa</span>` : ""}
+          <small class="sub">${plural(r.pontos || 0, "ponto", "pontos")}${r.vaos ? ` · ${plural(r.vaos, "vão", "vãos")}` : ""} · ${plural(r.servicos || 0, "serviço", "serviços")} · ${plural(r.fotos || 0, "foto", "fotos")}${r.valor != null ? ` · ${M.fmtMoeda(r.valor)}` : ""}</small>
+          <small class="sub">Cópia ${esc(MOTIVO_COPIA[x.motivo] || x.motivo || "")}</small></div>
+        ${outro || modoFotos() ? `<small class="sub">só consulta</small>` : `<button type="button" class="botao botao-claro botao-pequeno" data-acao="restaurar-copia" data-id="${esc(x.id)}">↩ Restaurar</button>`}
+      </div>`;
+    };
+    const blocos = [...grupos.entries()].map(([obraId, lista]) => {
+      const maior = lista.reduce((m, x) => (!m || (x.resumo?.lancados || 0) > (m.resumo?.lancados || 0) || ((x.resumo?.lancados || 0) === (m.resumo?.lancados || 0) && (x.resumo?.servicos || 0) > (m.resumo?.servicos || 0)) ? x : m), null);
+      const aberta = c.abertas.has(obraId);
+      const vistas = aberta ? lista : [];
+      const local = locais.get(obraId);
+      return `<section class="cartao copias-obra">
+        <button type="button" class="linha-topo copias-cab" data-acao="copias-abrir" data-obra="${esc(obraId)}">
+          <span class="chip-obra"><small>OBRA</small><b>${esc(lista[0].numero || "")}</b></span>
+          <small class="sub">${plural(lista.length, "cópia", "cópias")}${local ? "" : " · não está mais na lista"} ${aberta ? "▲" : "▼"}</small>
+        </button>
+        ${vistas.map((x) => linha(x, maior)).join("")}
+      </section>`;
+    }).join("");
+    return `<div class="pagina pagina-form">
+      ${topo("Cópias de segurança", voltar)}
+      <section class="cartao dados">
+        <p class="sub">O app guarda sozinho, neste aparelho, cópias de cada obra enquanto você trabalha (uma a cada 10 minutos; se a obra perder pontos, a anterior fica guardada). Se der algum erro, restaure a cópia de antes. As fotos ficam guardadas à parte e não se perdem.</p>
+        <div class="botoes-backup">
+          <button type="button" class="botao" data-acao="baixar-backup">⬇ Baixar backup (arquivo)</button>
+          <label class="botao botao-claro">📂 Restaurar de um arquivo<input type="file" accept=".json,application/json" data-acao="arquivo-backup" hidden></label>
+        </div>
+        <small class="sub">O arquivo leva todas as obras e cópias deste aparelho (sem as fotos). Guarde no computador ou no Drive. Ao abrir um arquivo, as obras dele viram cópias aqui: é só restaurar a que quiser.</small>
+      </section>
+      ${c.de ? `<button type="button" class="link" data-acao="copias">Ver as cópias de todas as obras</button>` : ""}
+      ${blocos || `<p class="vazio">Nenhuma cópia ainda. Elas aparecem sozinhas quando você lança alguma coisa numa obra.</p>`}
+    </div>`;
+  }
+  /** volta a obra como estava na cópia (a de agora vira outra cópia antes, dá para desfazer) */
+  async function restaurarCopia(id) {
+    const c = await Banco.obterCopia(id);
+    if (!c) return avisar("Cópia não encontrada.", "erro");
+    if (deOutro(c.obra)) return avisar("Obra de outro supervisor: só consulta.", "erro");
+    const atual = await Banco.obterObra(c.obraId);
+    const r = c.resumo || {};
+    if (!confirm(`Restaurar a obra ${c.numero} como estava em ${M.fmtHora(c.em)}?\n\n${plural(r.pontos || 0, "ponto", "pontos")}, ${plural(r.servicos || 0, "serviço", "serviços")}, ${plural(r.fotos || 0, "foto", "fotos")}.\n\nO que a obra tem agora vira outra cópia antes (dá para voltar). O que está no banco e não está na cópia continua junto.`)) return;
+    if (atual) await Banco.guardarCopia(atual, "antes de restaurar", { forcar: true });
+    const volta = JSON.parse(JSON.stringify(c.obra));
+    const obra = atual
+      ? { ...atual, ...volta, id: atual.id, dono: atual.dono, dono_id: atual.dono_id || volta.dono_id, base_em: atual.base_em, base_pontos: atual.base_pontos, rotulos: atual.rotulos || volta.rotulos || null, fotos_info: { ...(volta.fotos_info || {}), ...(atual.fotos_info || {}) } }
+      : { ...volta, dono: true, dono_id: volta.dono_id || estado.perfil?.user_id || null };
+    // os pontos que voltam saem da lista dos excluídos de propósito (senão o banco os tiraria de novo)
+    const voltam = new Set(obra.pontos.map((p) => p.id));
+    obra.pontos_fora = (atual?.pontos_fora || volta.pontos_fora || []).filter((pid) => !voltam.has(pid));
+    obra.erro_envio = null;
+    // obra excluída deste aparelho: volta para a lista
+    const ex = await obrasExcluidas();
+    if (ex.has(obra.id)) { ex.delete(obra.id); await Banco.gravar("excluidas", [...ex]); }
+    const fila = await Banco.ler("exclusoes", []);
+    if (fila.includes(obra.id)) await Banco.gravar("exclusoes", fila.filter((x) => x !== obra.id));
+    await Banco.salvarObra(obra);
+    await recarregarLocais();
+    estado.obra = obra;
+    avisar(`Obra ${obra.numero} restaurada como estava em ${M.fmtHora(c.em)}. Ela vai para o banco quando tiver sinal.`, "ok", 8000);
+    enviarDepois(500);
+    return irPara("obra");
+  }
+  async function baixarBackup() {
+    avisar("Montando o backup…", "guardado");
+    await Banco.copiasProntas();
+    const [obras, copias] = await Promise.all([Banco.listarObras(), Banco.listarCopias()]);
+    const dados = { tipo: "medicao-croqui-backup", versao_app: self.VERSAO_APP?.numero || null, gerado_em: new Date().toISOString(), supervisor: estado.perfil?.nome || "", obras, copias };
+    const blob = new Blob([JSON.stringify(dados)], { type: "application/json" });
+    const dia = new Date().toLocaleString("pt-BR").replace(/[/:]/g, "-").replace(", ", " ");
+    baixar(blob, `BACKUP MEDIÇÃO CROQUI ${dia}.json`);
+    avisar(`Backup baixado: ${plural(obras.length, "obra", "obras")} e ${plural(copias.length, "cópia", "cópias")}. Guarde o arquivo no computador ou no Drive.`, "ok", 8000);
+  }
+  async function receberBackup(arquivo) {
+    if (!arquivo) return;
+    let dados;
+    try { dados = JSON.parse(await arquivo.text()); } catch (e) { return avisar("Esse arquivo não é um backup do app.", "erro"); }
+    if (dados?.tipo !== "medicao-croqui-backup") return avisar("Esse arquivo não é um backup do app.", "erro");
+    let novas = 0;
+    for (const c of dados.copias || []) if (await Banco.importarCopia({ ...c })) novas++;
+    // as obras do arquivo entram como cópias (nada é trocado sem você restaurar)
+    for (const o of dados.obras || []) {
+      if (!o?.id) continue;
+      if (await Banco.guardarCopia({ ...o, dono: o.dono === false ? undefined : o.dono }, "arquivo", { forcar: true })) novas++;
+    }
+    avisar(`${plural(novas, "cópia nova veio", "cópias novas vieram")} do arquivo de ${dados.gerado_em ? M.fmtHora(dados.gerado_em) : "backup"}. Restaure a que quiser.`, "ok", 8000);
+    return abrirCopias(null);
   }
 
   function instalarHtml() {
@@ -1163,6 +1278,7 @@
             : `<p class="vazio">Nenhum ponto ainda. Cada poste ou trecho é um ponto (P1, P2...).</p>`}
       </section>
       <section class="bloco acoes-obra">
+        <button type="button" class="botao botao-claro" data-acao="copias" data-obra="${esc(o.id)}">🗂 Cópias de segurança desta obra</button>
         <button type="button" class="botao botao-perigo" data-acao="excluir-obra">${soLeitura(o) ? "Tirar deste celular" : "Excluir obra"}</button>
       </section>
       <div class="rodape">
@@ -3596,6 +3712,14 @@
       case "inicio": return irPara("inicio");
       case "atualizar-app": return atualizarApp();
       case "conta": return irPara("conta");
+      case "copias": return abrirCopias(alvo.dataset.obra || null);
+      case "copias-abrir": {
+        const ab = estado.copias?.abertas;
+        if (ab) { if (ab.has(alvo.dataset.obra)) ab.delete(alvo.dataset.obra); else ab.add(alvo.dataset.obra); }
+        return render();
+      }
+      case "restaurar-copia": return restaurarCopia(alvo.dataset.id);
+      case "baixar-backup": return baixarBackup();
       case "sair": return sairDaConta();
       case "filtro":
         estado.filtro = alvo.dataset.f;
@@ -4141,6 +4265,11 @@
       const arquivos = [...t.files];
       t.value = "";
       return receberProjeto(arquivos, t.dataset.modo || "trocar");
+    }
+    if (t.dataset.acao === "arquivo-backup") {
+      const arq = t.files[0];
+      t.value = "";
+      return receberBackup(arq);
     }
     if (t.dataset.acao === "foto") {
       const arquivos = [...t.files];
