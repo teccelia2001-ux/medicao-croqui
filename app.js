@@ -155,9 +155,11 @@
   /** A obra do banco PERDEU pontos com coisa lançada que este aparelho tem (e que ninguém
    *  excluiu de propósito)? Foi uma cópia velha passando por cima: este aparelho não troca a
    *  dele pela do banco. */
+  /** pontos excluídos de propósito, como o banco tem (coluna própria e, antes dela, no projeto) */
+  const foraDoBanco = (r) => [...new Set([...(Array.isArray(r.pontos_fora) ? r.pontos_fora : []), ...(r.projeto?.pontos_fora || [])])];
   function bancoPerdeu(local, r) {
     const noBanco = new Set((r.pontos || []).map((p) => p.id));
-    const fora = new Set(r.projeto?.pontos_fora || []);
+    const fora = new Set(foraDoBanco(r));
     return local.pontos.filter((p) => temConteudo(p) && !noBanco.has(p.id) && !fora.has(p.id)).length;
   }
   /** Antes de subir: se a obra mudou no banco depois da cópia deste aparelho (outro aparelho
@@ -172,7 +174,7 @@
     const r = await Nuvem.baixarObra(o.id);
     if (!r) return o;
     const fora = new Set(o.pontos_fora || []);
-    const foraBanco = new Set(r.projeto?.pontos_fora || []);
+    const foraBanco = new Set(foraDoBanco(r));
     const aqui = new Map(o.pontos.map((p) => [p.id, p]));
     const qtd = (p) => (p.itens?.length || 0) + (p.fotos?.length || 0) + ((p.obs || "").trim() ? 1 : 0);
     let entraram = 0;
@@ -487,7 +489,7 @@
     const remota = estado.remotas?.find((x) => x.id === id);
     const obra = {
       id: r.id, numero: r.numero, local: r.local || "", municipio: r.municipio || "", departamento: r.departamento,
-      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, pontos_fora, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null, pontos_fora: r.projeto?.pontos_fora || [],
+      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, pontos_fora, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null, pontos_fora: foraDoBanco(r),
       criada_em: r.criada_em, atualizada_em: r.atualizada_em, pendente: false, enviada_em: r.recebida_em,
       dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null, base_em: r.atualizada_em,
     };

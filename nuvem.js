@@ -199,6 +199,7 @@
   }
 
   /** Manda uma obra: primeiro as fotos que faltam, depois o documento. */
+  let temColunaFora = true;
   async function enviarObra(obra, totais) {
     await enviarProjeto(obra.id);
     const fotosLocais = await enviarFotos(obra.id);
@@ -212,18 +213,28 @@
     // foto que veio do banco e ainda não foi baixada neste aparelho
     for (const id of usadas) if (!infos[id] && obra.fotos_info?.[id]) infos[id] = obra.fotos_info[id];
     const enviadoEm = obra.atualizada_em;
-    await chamar("/rest/v1/medicao_croqui_obras?on_conflict=id", {
-      metodo: "POST",
-      cabecalhos: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      corpo: {
+    const corpo = {
         id: obra.id, numero: obra.numero, local: obra.local || null, municipio: obra.municipio || null,
         departamento: obra.departamento, equipe: obra.equipe || null, obs: obra.obs || null,
         // anotações, rascunho e os (P) lidos vão junto do projeto (a tabela não tem coluna própria)
         pontos: obra.pontos, fotos: infos, projeto: obra.projeto ? { ...obra.projeto, anotacoes: obra.anotacoes || null, rotulos: obra.rotulos || null, pontos_fora: obra.pontos_fora || null } : null,
         total: totais.valor, total_us: totais.us,
         qtd_pontos: obra.pontos.filter((p) => !p.geral && !p.vao).length, criada_em: obra.criada_em, atualizada_em: obra.atualizada_em,
-      },
+    };
+    // pontos excluídos de propósito: coluna própria (supabase/05), que vale também sem projeto.
+    // Banco ainda sem a coluna: manda sem ela (a lista segue dentro do projeto)
+    const subir = (c) => chamar("/rest/v1/medicao_croqui_obras?on_conflict=id", {
+      metodo: "POST", cabecalhos: { Prefer: "resolution=merge-duplicates,return=minimal" }, corpo: c,
     });
+    if (temColunaFora) {
+      try {
+        await subir({ ...corpo, pontos_fora: obra.pontos_fora || null });
+      } catch (e) {
+        if (!/pontos_fora/.test(e.message || "")) throw e;
+        temColunaFora = false;
+        await subir(corpo);
+      }
+    } else await subir(corpo);
     // só marca como enviada se ninguém mexeu na obra enquanto ela subia
     const atual = await Banco.obterObra(obra.id);
     if (atual && atual.atualizada_em === enviadoEm) {
