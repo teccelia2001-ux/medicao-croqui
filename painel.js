@@ -13,12 +13,12 @@
   const dia = (iso) => (iso ? iso.slice(0, 10) : "");
 
   let tempoAviso = null;
-  function avisar(texto, tipo = "ok") {
+  function avisar(texto, tipo = "ok", tempo = 3500) {
     $aviso.textContent = texto;
     $aviso.className = `aviso aviso-${tipo}`;
     $aviso.hidden = false;
     clearTimeout(tempoAviso);
-    tempoAviso = setTimeout(() => ($aviso.hidden = true), 3500);
+    tempoAviso = setTimeout(() => ($aviso.hidden = true), tempo);
   }
 
   const estado = {
@@ -33,15 +33,17 @@
     gerando: false,
     aba: (() => {
       const h = location.hash.slice(1);
-      if (["obras", "projetos", "ajustes"].includes(h)) return h;
+      if (["obras", "projetos", "backup", "ajustes"].includes(h)) return h;
       try { return localStorage.getItem("painel_aba") || "obras"; } catch (e) { return "obras"; }
-    })(), // obras | projetos | ajustes
+    })(), // obras | projetos | backup | ajustes
+    copias: null, // cópias de segurança deste aparelho (aba Backup)
+    montandoBackup: false,
     baixandoProj: null, // obra com o projeto sendo baixado
     espacoHtml: "", // espaço deste aparelho (Ajustes)
     novaVersao: null, // { numero, data } quando saiu versão nova
     procurandoVersao: false,
   };
-  const ABAS = [["obras", "📋", "Obras medidas", "Obras"], ["projetos", "🗺", "Projetos", "Projetos"], ["ajustes", "⚙", "Ajustes", "Ajustes"]];
+  const ABAS = [["obras", "📋", "Obras medidas", "Obras"], ["projetos", "🗺", "Projetos", "Projetos"], ["backup", "🗂", "Cópias e backup", "Backup"], ["ajustes", "⚙", "Ajustes", "Ajustes"]];
 
   // ------------------------------------------------------------------ dados
   async function carregar(avisando = false) {
@@ -487,10 +489,54 @@ Ele não entra mais no app nem no painel, nos dois apps de medição. Não dá p
       </section>`;
   }
 
+  // ------------------------------------------------------------------ cópias e backup (copias.js)
+  const ctxCopias = () => ({ perfil: estado.perfil, avisar, obrasDoBanco: estado.obras || [] });
+  async function abrindoBackup() {
+    try {
+      estado.copias = await Copias.carregar(estado.copias?.abertas);
+    } catch (e) {
+      estado.copias = { lista: [], locais: new Set(), abertas: new Set() };
+      avisar("Não deu para ler as cópias deste aparelho.", "erro");
+    }
+    if (estado.aba === "backup") render();
+  }
+  function abaBackup() {
+    return `<section class="bloco-ajuste">
+        <h2 class="titulo-ajuste">💾 Backup em arquivo</h2>
+        <div class="cartao cartao-ajuste">
+          <p>O arquivo leva <b>todas as obras do banco</b>${estado.obras ? ` (${estado.obras.length})` : ""}, de todos os supervisores, e as obras e cópias deste aparelho. As fotos não vão no arquivo. Guarde no computador ou no Drive.</p>
+          <div class="botoes">
+            <button type="button" class="botao" data-acao="baixar-backup" ${estado.obras && !estado.montandoBackup ? "" : "disabled"}>${estado.montandoBackup ? "Montando…" : "⬇ Baixar backup (arquivo)"}</button>
+            <label class="botao botao-claro botao-link">📂 Restaurar de um arquivo<input type="file" accept=".json,application/json" data-acao="arquivo-backup" hidden></label>
+          </div>
+          <p class="dica">Ao abrir um arquivo, as obras dele viram cópias na lista abaixo. Nada é trocado até tocar em Restaurar.</p>
+        </div>
+      </section>
+      <section class="bloco-ajuste">
+        <h2 class="titulo-ajuste">🗂 Cópias de segurança deste aparelho</h2>
+        <p class="dica">Cada aparelho guarda sozinho as cópias das obras lançadas nele (uma a cada 10 minutos de trabalho; se a obra perder pontos, a anterior fica guardada). Aqui aparecem as deste aparelho. A obra de outro supervisor é restaurada com o acesso dele, em ⚙ Ajustes do app.</p>
+        ${estado.copias ? Copias.listaHtml(estado.copias, ctxCopias()) : `<p class="vazio">Carregando…</p>`}
+      </section>`;
+  }
+  async function restaurarCopia(id) {
+    const obra = await Copias.restaurar(id, ctxCopias());
+    if (!obra) return;
+    // quem manda a obra para o banco é o app: abre ele para ela subir
+    alert(`Obra ${obra.numero} restaurada. O app vai abrir para ela subir para o banco.`);
+    location.href = "./";
+  }
+  async function baixarBackup() {
+    estado.montandoBackup = true;
+    render();
+    try { await Copias.baixarArquivo(ctxCopias()); } catch (e) { avisar("Não deu para montar o backup: " + e.message, "erro", 8000); }
+    estado.montandoBackup = false;
+    render();
+  }
+
   function telaPainel() {
     const n = (estado.obras || []).length, np = comProjeto(estado.obras || []).length;
-    const conta = { obras: estado.obras ? n : "", projetos: estado.obras ? np : "", ajustes: "" };
-    const corpo = estado.aba === "projetos" ? abaProjetos() : estado.aba === "ajustes" ? abaAjustes() : abaObras();
+    const conta = { obras: estado.obras ? n : "", projetos: estado.obras ? np : "", backup: "", ajustes: "" };
+    const corpo = estado.aba === "projetos" ? abaProjetos() : estado.aba === "backup" ? abaBackup() : estado.aba === "ajustes" ? abaAjustes() : abaObras();
     return `<header class="barra">
         <img src="logo-teccel-red.png" alt="Teccel">
         <h1>Painel da medição por croqui</h1>
@@ -620,6 +666,7 @@ Ele não entra mais no app nem no painel, nos dois apps de medição. Não dá p
       try { localStorage.setItem("painel_aba", estado.aba); } catch (err) { /* sem espaço */ }
       render();
       if (estado.aba === "ajustes") abrindoAjustes();
+      if (estado.aba === "backup") abrindoBackup();
       return;
     }
     const pj = e.target.closest("[data-projeto]");
@@ -656,6 +703,13 @@ Ele não entra mais no app nem no painel, nos dois apps de medição. Não dá p
         estado.aberta = null;
         return render();
       case "sair": return sairDaConta();
+      case "copias-abrir": {
+        const ab = estado.copias?.abertas;
+        if (ab && !ab.delete(acao.dataset.obra)) ab.add(acao.dataset.obra);
+        return render();
+      }
+      case "restaurar-copia": return restaurarCopia(acao.dataset.id);
+      case "baixar-backup": return baixarBackup();
       case "procurar-versao": return procurarVersao(true);
       case "atualizar-app": return atualizarApp();
       case "abrir-senha":
@@ -680,6 +734,12 @@ Ele não entra mais no app nem no painel, nos dois apps de medição. Não dá p
     if (t.dataset.acao === "copia-fotos") {
       try { localStorage.setItem("croqui_copia_fotos", t.checked ? "sim" : "nao"); } catch (err) { /* sem espaço */ }
       return avisar(t.checked ? "Cada foto tirada no app vai ganhar uma cópia no celular." : "Cópia no celular desligada.");
+    }
+    if (t.dataset.acao === "arquivo-backup") {
+      const arq = t.files[0];
+      if (await Copias.receberArquivo(arq, ctxCopias())) await abrindoBackup();
+      t.value = "";
+      return;
     }
     const id = t.dataset.uNome || t.dataset.uAtivo || t.dataset.uAdmin;
     if (!id) return;
@@ -780,6 +840,7 @@ Ele não entra mais no app nem no painel, nos dois apps de medição. Não dá p
     if (!ehAdmin()) return; // supervisor: só a tela de sem acesso
     carregar();
     if (estado.aba === "ajustes") abrindoAjustes();
+    if (estado.aba === "backup") abrindoBackup();
     procurarVersao();
   }
   /** aba Ajustes aberta: usuários (administrador) e o espaço deste aparelho */

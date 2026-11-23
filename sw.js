@@ -15,6 +15,7 @@ const ARQUIVOS = [
   "banco.js",
   "medicao.js",
   "croqui.js",
+  "copias.js",
   "config.js",
   "nuvem.js",
   "painel.html",

@@ -267,3 +267,15 @@ tbody.sem-clique tr:hover { background: transparent; }
 .botao-link { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .mini-perigo { color: #b91c1c; border-color: #fecaca; }
 .mini-perigo:hover:not(:disabled) { background: #fee2e2; border-color: #b91c1c; color: #b91c1c; }
+
+/* aba Backup: cópias de segurança de cada obra (copias.js) */
+.copias-obra { padding: 12px 16px; display: grid; gap: 8px; }
+.copias-cab { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 0; border: 0; background: none; text-align: left; }
+.copias-cab .chip-obra small { font-size: 10px; opacity: 0.85; }
+.copia { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--borda); }
+.copia > div { display: grid; gap: 2px; }
+.copia .sub, .copias-cab .sub { color: var(--suave); }
+.copia-maior b { color: var(--verde); }
+.copia-selo { font-size: 12px; font-weight: 700; color: var(--verde); }
+.copia .botao { flex: none; }
+label.botao { cursor: pointer; }
