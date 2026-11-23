@@ -219,7 +219,7 @@
         id: obra.id, numero: obra.numero, local: obra.local || null, municipio: obra.municipio || null,
         departamento: obra.departamento, equipe: obra.equipe || null, obs: obra.obs || null,
         // anotações, rascunho e os (P) lidos vão junto do projeto (a tabela não tem coluna própria)
-        pontos: obra.pontos, fotos: infos, projeto: obra.projeto ? { ...obra.projeto, anotacoes: obra.anotacoes || null, rotulos: obra.rotulos || null } : null,
+        pontos: obra.pontos, fotos: infos, projeto: obra.projeto ? { ...obra.projeto, anotacoes: obra.anotacoes || null, rotulos: obra.rotulos || null, pontos_fora: obra.pontos_fora || null } : null,
         total: totais.valor, total_us: totais.us,
         qtd_pontos: obra.pontos.filter((p) => !p.geral && !p.vao).length, criada_em: obra.criada_em, atualizada_em: obra.atualizada_em,
       },
@@ -227,6 +227,7 @@
     // só marca como enviada se ninguém mexeu na obra enquanto ela subia
     const atual = await Banco.obterObra(obra.id);
     if (atual && atual.atualizada_em === enviadoEm) {
+      atual.base_em = enviadoEm; // a versão do banco agora é esta
       atual.pendente = false;
       atual.enviada_em = new Date().toISOString();
       atual.fotos_info = infos;

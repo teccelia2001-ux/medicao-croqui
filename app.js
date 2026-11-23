@@ -145,6 +145,56 @@
   /** foto do modo só fotos leva o ponto no id (é o nome do arquivo no banco) */
   const idDaFoto = (p) => (modoFotos() ? `${p.id}__${novoId()}` : novoId());
 
+  /** o conteúdo da obra (sem o que só diz do envio): igual = nada mudou */
+  const FORA_DA_ASSINATURA = new Set(["pendente", "atualizada_em", "enviada_em", "erro_envio", "fotos_info", "dono", "dono_id", "base_em", "supervisor_nome"]);
+  const assinatura = (o) => JSON.stringify(o, (k, v) => (FORA_DA_ASSINATURA.has(k) ? undefined : v));
+  /** pontos com alguma coisa lançada (serviço, foto ou observação) */
+  const temConteudo = (p) => !!((p.itens && p.itens.length) || (p.fotos && p.fotos.length) || (p.obs || "").trim());
+  /** ponto excluído aqui: não volta quando a obra é juntada com a do banco */
+  const marcarFora = (o, ids) => { o.pontos_fora = [...new Set([...(o.pontos_fora || []), ...ids])]; };
+  /** A obra do banco PERDEU pontos com coisa lançada que este aparelho tem (e que ninguém
+   *  excluiu de propósito)? Foi uma cópia velha passando por cima: este aparelho não troca a
+   *  dele pela do banco. */
+  function bancoPerdeu(local, r) {
+    const noBanco = new Set((r.pontos || []).map((p) => p.id));
+    const fora = new Set(r.projeto?.pontos_fora || []);
+    return local.pontos.filter((p) => temConteudo(p) && !noBanco.has(p.id) && !fora.has(p.id)).length;
+  }
+  /** Antes de subir: se a obra mudou no banco depois da cópia deste aparelho (outro aparelho
+   *  enviou), junta as duas em vez de passar por cima. Ponto do banco que falta aqui entra
+   *  (menos o que foi excluído aqui); o mesmo ponto fica o daqui, menos quando o do banco tem
+   *  mais coisa lançada (a daqui era cópia velha). Fotos dos dois lados ficam. */
+  async function juntarComOBanco(o) {
+    let v;
+    try { v = await Nuvem.versaoObra(o.id); } catch (e) { if (e.status === 0) throw e; return o; }
+    if (!v) return o; // ainda não está no banco
+    if (o.base_em && new Date(v).getTime() <= new Date(o.base_em).getTime()) return o; // ninguém mexeu
+    const r = await Nuvem.baixarObra(o.id);
+    if (!r) return o;
+    const fora = new Set(o.pontos_fora || []);
+    const foraBanco = new Set(r.projeto?.pontos_fora || []);
+    const aqui = new Map(o.pontos.map((p) => [p.id, p]));
+    const qtd = (p) => (p.itens?.length || 0) + (p.fotos?.length || 0) + ((p.obs || "").trim() ? 1 : 0);
+    let entraram = 0;
+    for (const rp of r.pontos || []) {
+      if (fora.has(rp.id)) continue;
+      const lp = aqui.get(rp.id);
+      if (!lp) { o.pontos.push(rp); entraram++; continue; }
+      if (qtd(rp) > qtd(lp)) { Object.keys(lp).forEach((k) => delete lp[k]); Object.assign(lp, rp); entraram++; continue; }
+      for (const f of rp.fotos || []) if (!lp.fotos.includes(f) && !(lp.fotos_fora || []).includes(f)) lp.fotos.push(f);
+    }
+    // excluído no outro aparelho e intacto aqui: sai daqui também
+    o.pontos = o.pontos.filter((p) => !(foraBanco.has(p.id) && !temConteudo(p)));
+    o.pontos_fora = [...new Set([...(o.pontos_fora || []), ...foraBanco])];
+    o.fotos_info = { ...(r.fotos || {}), ...(o.fotos_info || {}) };
+    o.base_em = v;
+    await Banco.salvarObra(o, { envio: true });
+    if (entraram) avisar(`Obra ${o.numero}: ${plural(entraram, "ponto do banco foi juntado", "pontos do banco foram juntados")} com os deste aparelho.`, "guardado", 6000);
+    // a aberta mostra os pontos juntados (se ninguém está mexendo nela agora)
+    if (entraram && estado.obra?.id === o.id && podeTrocarAberta(true)) { estado.obra = o; render(); }
+    return o;
+  }
+
   let tempoSalvar = null;
   let vaiSalvar = false; // tem alteração esperando os 400 ms para ser guardada
   function salvarDepois() {
@@ -164,6 +214,10 @@
     if (soLeitura(estado.obra)) return;
     if ((await obrasExcluidas()).has(estado.obra.id)) return;
     try {
+      // nada mudou desde a cópia guardada: não marca para envio (antes, só abrir e voltar já
+      // marcava, e uma cópia velha de outro aparelho passava por cima da obra no banco)
+      const guardada = await Banco.obterObra(estado.obra.id);
+      if (guardada && assinatura(guardada) === assinatura(estado.obra)) return;
       estado.obra.dono = true;
       await Banco.salvarObra(estado.obra);
       enviarDepois();
@@ -176,6 +230,7 @@
     const saindo = estado.tela === "ponto" ? ponto() : null;
     if (saindo?.geral && !saindo.itens.length && !saindo.fotos.length && !saindo.obs && (extra.pontoId !== saindo.id)) {
       estado.obra.pontos = estado.obra.pontos.filter((x) => x !== saindo);
+      marcarFora(estado.obra, [saindo.id]);
     }
     await salvarAgora();
     // outro ponto (ou outra tela): a pesquisa dos serviços lançados começa limpa
@@ -288,6 +343,7 @@
       const obras = modoFotos() ? [] : (await Banco.listarObras()).filter((o) => o.pendente && o.dono !== false && o.criada_em && (!o.dono_id || o.dono_id === meu) && !ex.has(o.id));
       for (const o of obras) {
         try {
+          await juntarComOBanco(o);
           await Nuvem.enviarObra(o, M.totaisObra(o));
         } catch (e) {
           if (e.status === 0) throw e; // caiu o sinal: tenta tudo depois
@@ -392,9 +448,9 @@
 
   /** a obra aberta pode ser trocada pela do banco: nada esperando para salvar ou enviar, e o
    *  supervisor não está digitando nem no meio de um toque, ajuste ou rascunho */
-  function podeTrocarAberta() {
+  function podeTrocarAberta(mesmoPendente = false) {
     const o = estado.obra;
-    if (!o || vaiSalvar || o.pendente) return false;
+    if (!o || vaiSalvar || (o.pendente && !mesmoPendente)) return false;
     if (document.activeElement?.matches?.("input, textarea, select")) return false;
     return !(estado.escolhido || estado.cqNovo || estado.cqNota || estado.cqAjuste || estado.cqVaoNovo || estado.cqDesenho || estado.cqMover || estado.cqMoverNota || estado.gerando);
   }
@@ -402,13 +458,21 @@
   async function trazerObra(id) {
     const r = await Nuvem.baixarObra(id);
     if (!r) throw new Error("A obra não está mais no banco.");
+    // o banco perdeu pontos que este aparelho tem: fica a cópia daqui, e ela sobe (junta no envio)
+    const local = await Banco.obterObra(id);
+    if (local && !deOutro(local) && !modoFotos() && bancoPerdeu(local, r)) {
+      await Banco.salvarObra(local); // marca para envio
+      enviarDepois(500);
+      avisar(`Obra ${local.numero}: o banco estava com menos pontos que este aparelho. A cópia daqui foi mantida e vai subir.`, "guardado", 9000);
+      return local;
+    }
     const dono = r.supervisor_id === estado.perfil?.user_id;
     const remota = estado.remotas?.find((x) => x.id === id);
     const obra = {
       id: r.id, numero: r.numero, local: r.local || "", municipio: r.municipio || "", departamento: r.departamento,
-      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null,
+      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, pontos_fora, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null, pontos_fora: r.projeto?.pontos_fora || [],
       criada_em: r.criada_em, atualizada_em: r.atualizada_em, pendente: false, enviada_em: r.recebida_em,
-      dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null,
+      dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null, base_em: r.atualizada_em,
     };
     await juntarFotosDaqui(obra);
     await Banco.salvarObra(obra, { envio: true });
@@ -1301,7 +1365,9 @@
     const antes = o.pontos.length;
     // poste que é começo ou fim de um vão fica (o vão precisa dele)
     const doVao = new Set(o.pontos.filter((p) => p.vao).flatMap((v) => [v.vao.de, v.vao.para]));
-    o.pontos = o.pontos.filter((p) => !(p.doProjeto && !doVao.has(p.id) && !p.itens.length && !p.fotos.length && !(p.obs || "").trim()));
+    const sai = o.pontos.filter((p) => p.doProjeto && !doVao.has(p.id) && !p.itens.length && !p.fotos.length && !(p.obs || "").trim());
+    if (sai.length) marcarFora(o, sai.map((p) => p.id));
+    o.pontos = o.pontos.filter((p) => !sai.includes(p));
     o.pontos.forEach((p) => { delete p.provisorio; delete p.perto; });
     return antes - o.pontos.length;
   }
@@ -3450,6 +3516,13 @@
             return avisar(err.message, "erro");
           }
         }
+        // cópia parada aqui e o banco mais novo (mexida em outro aparelho): abre a do banco
+        if (!obra.pendente && navigator.onLine) {
+          try {
+            const v = await Nuvem.versaoObra(obra.id);
+            if (v && new Date(v) > new Date(obra.base_em || obra.atualizada_em || 0)) obra = await trazerObra(obra.id);
+          } catch (err) { /* sem resposta: abre a daqui */ }
+        }
         estado.obra = obra;
         estado.filtroPonto = ""; // obra nova, pesquisa limpa
         if (!soLeitura(obra) && soltarPontasDeOutraFolha(obra)) await salvarAgora();
@@ -3491,6 +3564,7 @@
         const p = ponto();
         if (!confirm(`${p.geral ? "Excluir os serviços lançados sem ponto? Eles saem" : `Excluir o ponto ${p.nome}? Os serviços dele saem`} da medição.${p.fotos.length ? ` As ${plural(p.fotos.length, "foto", "fotos")} continuam guardadas no celular e no banco.` : ""}`)) return;
         o.pontos = o.pontos.filter((x) => x.id !== p.id);
+        marcarFora(o, [p.id]);
         if (estado.cqSel === p.id) estado.cqSel = null;
         return irPara(o.projeto ? "croqui" : "obra");
       }
