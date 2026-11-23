@@ -462,10 +462,11 @@
     if (!r) throw new Error("A obra não está mais no banco.");
     // o banco perdeu pontos que este aparelho tem: fica a cópia daqui, e ela sobe (junta no envio)
     const local = await Banco.obterObra(id);
-    if (local && !deOutro(local) && !modoFotos() && bancoPerdeu(local, r)) {
-      await Banco.salvarObra(local); // marca para envio
-      enviarDepois(500);
-      avisar(`Obra ${local.numero}: o banco estava com menos pontos que este aparelho. A cópia daqui foi mantida e vai subir.`, "guardado", 9000);
+    // (no modo só fotos ou com a obra de outro dono a cópia também fica, mas não sobe daqui)
+    if (local && bancoPerdeu(local, r)) {
+      const sobe = !deOutro(local) && !modoFotos();
+      if (sobe) { await Banco.salvarObra(local); enviarDepois(500); } // marca para envio
+      avisar(`Obra ${local.numero}: o banco estava com menos pontos que este aparelho. A cópia daqui foi mantida${sobe ? " e vai subir" : ""}.`, "guardado", 9000);
       return local;
     }
     const dono = r.supervisor_id === estado.perfil?.user_id;
