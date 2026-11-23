@@ -3471,7 +3471,7 @@
       if (tipo !== "xlsx" && o.projeto) {
         try {
           const proj = await garantirProjeto(o);
-          if (proj) croqui = await Croqui.paraPdf(o, proj, { recortes: tipo === "pdf", soPag: o.folhaPag || null });
+          if (proj) croqui = await Croqui.paraPdf(o, proj, { recortes: tipo === "pdf", soPag: o.folhaPag || null, desenho: escolhida });
           else avisar("O projeto não está neste celular: o PDF sai sem o croqui.", "erro");
         } catch (e) {
           console.error(e);

@@ -889,45 +889,112 @@
   }
 
   // ------------------------------------------------------------------ imagens para o PDF
-  const fonteMarca = (r) => `700 ${Math.round(r * 2.1)}px Helvetica, Arial, sans-serif`;
-
-  /** Desenha uma marca de ponto no canvas: bolinha e o nome com contorno branco, com o
-   *  canto de cima à esquerda do nome em (x + lx, y + ly). */
-  function desenharMarca(ctx, x, y, nome, cor, r, lx = r * 1.5, ly = -r * 1.05) {
-    // anel vazado (não cobre o projeto) com contorno branco e um pontinho no centro
-    const anel = Math.max(2, r * 0.3);
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.lineWidth = anel + Math.max(2, r * 0.25);
-    ctx.strokeStyle = "#fff";
-    ctx.stroke();
-    ctx.lineWidth = anel;
-    ctx.strokeStyle = cor;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(x, y, Math.max(1.5, r * 0.18), 0, Math.PI * 2);
-    ctx.fillStyle = cor;
+  /** Etiqueta de um ponto do croqui, como na tela do app: medidas em px do canvas, a partir
+   *  do raio `r` da bolinha (na tela: bolinha de 22 px e nome de 13 px). */
+  function medidasEtiqueta(ctx, m, r) {
+    const k = r / 11;
+    if (m.tipo === "nota") {
+      const fonte = 12 * k, pad = [3 * k, 6 * k], borda = 1.5 * k;
+      ctx.font = `700 ${fonte}px Helvetica, Arial, sans-serif`;
+      const linhas = quebrarTexto(ctx, m.nome, 178 * k);
+      const larg = Math.max(...linhas.map((l) => ctx.measureText(l).width));
+      return { fonte, peso: 700, pad, borda, linhas, lh: fonte * 1.25, w: larg + 2 * (pad[1] + borda), h: linhas.length * fonte * 1.25 + 2 * (pad[0] + borda), raio: 7 * k };
+    }
+    const fonte = (m.tipo === "vao" ? 12 : 13) * k, pad = m.tipo === "vao" ? [2 * k, 6 * k] : [3 * k, 6 * k];
+    ctx.font = `800 ${fonte}px Helvetica, Arial, sans-serif`;
+    return { fonte, peso: 800, pad, borda: 0, linhas: [m.nome], lh: fonte * 1.15, w: ctx.measureText(m.nome).width + 2 * pad[1], h: fonte * 1.15 + 2 * pad[0], raio: 7 * k };
+  }
+  /** o sinal do ponto: anel (poste), losango (vão) ou pontinho (anotação) */
+  function desenharSinal(ctx, m, x, y, r) {
+    const k = r / 11;
+    ctx.save();
+    if (m.tipo === "vao") {
+      const lado = 14 * k * (m.destaque ? 1.25 : 1);
+      ctx.translate(x, y);
+      ctx.rotate(Math.PI / 4);
+      caixa(ctx, -lado / 2, -lado / 2, lado, lado, 3 * k);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.lineWidth = 3 * k;
+      ctx.strokeStyle = m.cor;
+      ctx.stroke();
+    } else if (m.tipo === "nota") {
+      ctx.beginPath();
+      ctx.arc(x, y, 6 * k, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y, 4 * k, 0, Math.PI * 2);
+      ctx.fillStyle = m.cor;
+      ctx.fill();
+    } else {
+      const raio = (m.destaque ? 15 : 11) * k, anel = (m.destaque ? 4 : 3) * k;
+      if (m.destaque) { // halo do ponto escolhido
+        ctx.beginPath();
+        ctx.arc(x, y, raio + 5 * k, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(225, 20, 20, 0.15)";
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(x, y, raio - anel / 2, 0, Math.PI * 2);
+      ctx.lineWidth = anel + 3 * k;
+      ctx.strokeStyle = "#fff";
+      ctx.stroke();
+      ctx.lineWidth = anel;
+      ctx.strokeStyle = m.cor;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, 2.2 * k, 0, Math.PI * 2);
+      ctx.fillStyle = m.cor;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  /** o nome numa etiqueta (verde/laranja/roxa com letra branca; anotação azul-clara) */
+  function desenharEtiqueta(ctx, m, e, x0, y0, r) {
+    const k = r / 11;
+    ctx.save();
+    const nota = m.tipo === "nota";
+    ctx.shadowColor = nota ? "rgba(29, 78, 216, 0.3)" : "rgba(0, 0, 0, 0.35)";
+    ctx.shadowBlur = 4 * k;
+    ctx.shadowOffsetY = 1 * k;
+    caixa(ctx, x0, y0, e.w, e.h, e.raio);
+    ctx.fillStyle = nota ? "#eff6ff" : m.cor;
     ctx.fill();
-    ctx.font = fonteMarca(r);
+    ctx.shadowColor = "transparent";
+    if (nota) {
+      caixa(ctx, x0 + e.borda / 2, y0 + e.borda / 2, e.w - e.borda, e.h - e.borda, e.raio);
+      ctx.lineWidth = e.borda;
+      ctx.strokeStyle = m.cor;
+      ctx.stroke();
+    }
+    ctx.font = `${e.peso} ${e.fonte}px Helvetica, Arial, sans-serif`;
+    ctx.fillStyle = nota ? m.cor : "#fff";
     ctx.textBaseline = "middle";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = Math.max(3, r * 0.6);
-    ctx.strokeStyle = "#fff";
-    ctx.strokeText(nome, x + lx, y + ly + r * 1.05);
-    ctx.fillStyle = cor;
-    ctx.fillText(nome, x + lx, y + ly + r * 1.05);
+    ctx.textAlign = nota ? "left" : "center";
+    e.linhas.forEach((l, i) => {
+      const ly = y0 + e.pad[0] + e.borda + e.lh * (i + 0.5);
+      ctx.fillText(l, nota ? x0 + e.pad[1] + e.borda : x0 + e.w / 2, ly);
+    });
+    ctx.restore();
   }
 
-  /** Imagem (JPEG) da folha ou de um pedaço dela, com os pontos marcados.
+  /** Imagem (JPEG) da folha ou de um pedaço dela, desenhada como o croqui da tela do app.
    *  `recorte`: { x, y } fração da folha no centro, `largura` fração da largura da folha
-   *  e `proporcao` largura/altura do pedaço. `marcas`: [{ nome, x, y, cor, destaque }]. */
-  async function imagem(proj, { pag = 1, marcas = [], recorte = null, px = 2400, canvas = false, giro = 0 } = {}) {
+   *  e `proporcao` largura/altura do pedaço. `marcas`: [{ tipo: "ponto"|"vao"|"nota", nome,
+   *  x, y, cor, destaque }]; `linhas`: vãos [{ x1, y1, x2, y2, solta, cor }]; `tracos`:
+   *  rascunho [[[x, y]...]] (tudo em fração da folha). */
+  async function imagem(proj, { pag = 1, marcas = [], linhas = [], tracos = [], recorte = null, px = 2400, canvas = false, giro = 0 } = {}) {
     const doc = await abrir(proj);
     giro = giroValido(giro);
+    marcas = marcas.map((m) => ({ ...m, tipo: m.tipo || "ponto" }));
     const f = folhaGirada(await folha(doc, Math.min(Math.max(1, pag), doc.paginas)), giro);
     if (giro) {
-      marcas = marcas.map((m) => { const [x, y] = paraGirada(m.x, m.y, giro); return { ...m, x, y }; });
-      if (recorte) { const [x, y] = paraGirada(recorte.x, recorte.y, giro); recorte = { ...recorte, x, y }; }
+      const gi = (x, y) => paraGirada(x, y, giro);
+      marcas = marcas.map((m) => { const [x, y] = gi(m.x, m.y); return { ...m, x, y }; });
+      linhas = linhas.map((l) => { const [x1, y1] = gi(l.x1, l.y1), [x2, y2] = gi(l.x2, l.y2); return { ...l, x1, y1, x2, y2 }; });
+      tracos = tracos.map((t) => t.map(([x, y]) => gi(x, y)));
+      if (recorte) { const [x, y] = gi(recorte.x, recorte.y); recorte = { ...recorte, x, y }; }
     }
     let escala, dx = 0, dy = 0, w, h;
     if (recorte) {
@@ -947,18 +1014,47 @@
     cv.height = h;
     const ctx = cv.getContext("2d");
     await f.desenhar(ctx, escala, dx, dy, true).promise;
+    const X = (x) => x * f.W * escala - dx, Y = (y) => y * f.H * escala - dy;
     const r = Math.max(6, Math.round(Math.max(w, h) / (recorte ? 100 : 130)));
-    // o nome de cada ponto vai para o lado com menos desenho (não cobre as descrições)
+    const k = r / 11;
+    // o nome de cada marca vai para o lado com menos desenho (antes das linhas: elas não contam)
     const tinta = marcas.length ? mapaTinta(cv, 2) : null;
+    // rascunho do campo (azul) e os vãos (tracejado roxo, de poste a poste), como na tela
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const t of tracos) {
+      if (t.length < 2) continue;
+      ctx.beginPath();
+      t.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+      ctx.lineWidth = 3.5 * k + 3 * k;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.stroke();
+      ctx.lineWidth = 3.5 * k;
+      ctx.strokeStyle = "#1d4ed8";
+      ctx.stroke();
+    }
+    for (const l of linhas) {
+      ctx.beginPath();
+      ctx.moveTo(X(l.x1), Y(l.y1));
+      ctx.lineTo(X(l.x2), Y(l.y2));
+      ctx.globalAlpha = l.solta ? 0.6 : 0.85;
+      ctx.setLineDash(l.solta ? [3 * k, 6 * k] : [7 * k, 5 * k]);
+      ctx.lineWidth = (l.cor ? 4 : 3) * k;
+      ctx.strokeStyle = l.cor || "#7c3aed";
+      ctx.stroke();
+    }
+    ctx.restore();
     const pts = marcas.map((m) => {
-      const rm = m.destaque ? r * 1.25 : r;
-      ctx.font = fonteMarca(rm);
-      return { m, x: m.x * f.W * escala - dx, y: m.y * f.H * escala - dy, r: rm, w: ctx.measureText(m.nome).width, h: rm * 2.1 };
+      const e = medidasEtiqueta(ctx, m, r);
+      const rm = m.tipo === "ponto" ? (m.destaque ? 15 : 11) * k : m.tipo === "vao" ? 10 * k : 6 * k;
+      return { m, e, x: X(m.x), y: Y(m.y), r: rm, w: e.w, h: e.h };
     });
     const ocupados = pts.map((p) => ({ x0: p.x - p.r, y0: p.y - p.r, x1: p.x + p.r, y1: p.y + p.r }));
+    // o ponto em destaque arruma o nome primeiro
     for (const p of [...pts].sort((a, b) => (b.m.destaque ? 1 : 0) - (a.m.destaque ? 1 : 0))) {
       const f2 = tinta.f * tinta.f;
-      const l = melhorLugar(p.r, p.w, p.h, p.r * 0.4, (lx, ly) => {
+      const l = melhorLugar(p.r, p.w, p.h, 3 * k, (lx, ly) => {
         const ret = { x0: p.x + lx, y0: p.y + ly, x1: p.x + lx + p.w, y1: p.y + ly + p.h };
         return tintaEm(tinta, ret) + (sobreposicao(ret, ocupados) + foraDa(ret, w, h)) * 4 / f2;
       }, (p.w * p.h) / f2 / 100);
@@ -967,23 +1063,25 @@
       p.longe = l.longe;
       ocupados.push({ x0: p.x + l.dx, y0: p.y + l.dy, x1: p.x + l.dx + p.w, y1: p.y + l.dy + p.h });
     }
-    // as outras primeiro; a do ponto em destaque por cima
-    for (const p of [...pts].sort((a, b) => (a.m.destaque ? 1 : 0) - (b.m.destaque ? 1 : 0))) {
+    // anotações embaixo, os pontos por cima e o em destaque por último
+    const ordem = (p) => (p.m.destaque ? 3 : p.m.tipo === "ponto" ? 2 : p.m.tipo === "vao" ? 1 : 0);
+    for (const p of [...pts].sort((a, b) => ordem(a) - ordem(b))) {
       if (p.longe) {
-        // nome afastado para achar um branco: linha fina da bolinha até ele
+        // nome afastado para achar um branco: linha fina da marca até ele
         const [gx, gy] = pontaDaGuia(p.lx, p.ly, p.w, p.h);
         const n = Math.hypot(gx, gy) || 1;
         ctx.beginPath();
         ctx.moveTo(p.x + (gx / n) * p.r, p.y + (gy / n) * p.r);
         ctx.lineTo(p.x + gx, p.y + gy);
-        ctx.lineWidth = Math.max(1, p.r * 0.15) + 2;
-        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1.5 * k + 2 * k;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
         ctx.stroke();
-        ctx.lineWidth = Math.max(1, p.r * 0.15);
+        ctx.lineWidth = 1.5 * k;
         ctx.strokeStyle = p.m.cor;
         ctx.stroke();
       }
-      desenharMarca(ctx, p.x, p.y, p.m.nome, p.m.cor, p.r, p.lx, p.ly);
+      desenharSinal(ctx, p.m, p.x, p.y, r);
+      desenharEtiqueta(ctx, p.m, p.e, p.x + p.lx, p.y + p.ly, r);
     }
     if (canvas) return { cv, w, h };
     return { url: cv.toDataURL("image/jpeg", 0.85), w, h };
@@ -996,23 +1094,50 @@
   const COR_COM = "#15803d"; // ponto com serviço lançado
   const COR_SEM = "#ea580c"; // ponto marcado, ainda sem serviço
   const COR_DESTAQUE = "#e11414";
+  const COR_VAO = "#7c3aed"; // vão (como na tela)
+  const COR_VAO_COM = "#6d28d9";
+  const COR_NOTA = "#1d4ed8"; // anotação do campo
   const PROPORCAO_RECORTE = 190 / 58; // faixa do croqui na folha de cada ponto do PDF
 
   /** Imagens do croqui para o PDF da medição: cada folha do projeto que tem ponto (a 1ª
    *  sempre) com todos os pontos marcados e, com `recortes`, um pedaço do croqui em volta
    *  de cada ponto, com ele em destaque. */
-  async function paraPdf(obra, proj, { recortes = true, soPag = null } = {}) {
+  async function paraPdf(obra, proj, { recortes = true, soPag = null, desenho = null } = {}) {
     const pontos = (obra.pontos || []).filter((p) => !p.geral && p.croqui && (!soPag || (p.croqui.pag || 1) === soPag));
     const total = await paginas(proj);
     // medição de uma folha só: só ela; da obra inteira: as folhas com ponto (a 1ª sempre)
     const pags = soPag ? [soPag].filter((n) => n <= total) : [...new Set([1, ...pontos.map((p) => p.croqui.pag || 1)])].filter((n) => n <= total).sort((a, b) => a - b);
-    const marcasDa = (pag, destaque) => pontos.filter((p) => (p.croqui.pag || 1) === pag).map((p) => ({
-      nome: p.nome, x: p.croqui.x, y: p.croqui.y,
-      cor: p === destaque ? COR_DESTAQUE : p.itens.length ? COR_COM : COR_SEM, destaque: p === destaque,
-    }));
+    // desenhado igual ao croqui da tela: todos os postes marcados, os vãos (linha de poste a
+    // poste e a metragem), as anotações e o rascunho. `desenho`: a obra com todos os pontos
+    // (a medição só leva os que têm alguma coisa lançada)
+    const fonte = desenho || obra;
+    const todos = fonte.pontos || [];
+    const porId = new Map(todos.map((p) => [p.id, p]));
+    const camadaDa = (pag, destaque = null) => {
+      const sel = (p) => !!destaque && p.id === destaque.id;
+      const marcas = [], linhas = [];
+      for (const p of todos) {
+        if (p.geral || p.vao || !p.croqui || (p.croqui.pag || 1) !== pag) continue;
+        marcas.push({ tipo: "ponto", nome: p.nome, x: p.croqui.x, y: p.croqui.y, cor: sel(p) ? COR_DESTAQUE : p.itens.length ? COR_COM : COR_SEM, destaque: sel(p) });
+      }
+      for (const v of todos) {
+        if (!v.vao) continue;
+        const ra = porId.get(v.vao.de)?.croqui, rb = porId.get(v.vao.para)?.croqui;
+        if (v.vao.linha ? (v.croqui?.pag || 1) !== pag : !ra || !rb || (ra.pag || 1) !== pag || (rb.pag || 1) !== pag) continue;
+        const [a, b] = v.vao.linha ? v.vao.linha.map(([x, y]) => ({ x, y })) : [ra, rb];
+        linhas.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, solta: !v.vao.linha, cor: sel(v) ? COR_DESTAQUE : null });
+        marcas.push({ tipo: "vao", nome: v.vao.metros ? `${v.vao.metros} m` : "vão", x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, cor: sel(v) ? COR_DESTAQUE : v.itens.length ? COR_VAO_COM : COR_VAO, destaque: sel(v) });
+      }
+      const an = fonte.anotacoes || {};
+      for (const n of an.notas || []) {
+        if (n.pag !== pag) continue;
+        marcas.push({ tipo: "nota", nome: n.texto.length > 70 ? n.texto.slice(0, 67) + "…" : n.texto, x: n.x, y: n.y, cor: COR_NOTA });
+      }
+      return { marcas, linhas, tracos: (an.tracos || []).filter((t) => t.pag === pag).map((t) => t.pts) };
+    };
     const geral = [];
     const giroDe = (pag) => giroValido(obra.projeto?.giros?.[pag]);
-    for (const pag of pags) geral.push({ pag, total, ...(await imagem(proj, { pag, marcas: marcasDa(pag), giro: giroDe(pag) })) });
+    for (const pag of pags) geral.push({ pag, total, ...(await imagem(proj, { pag, ...camadaDa(pag), giro: giroDe(pag) })) });
     const porPonto = new Map();
     if (recortes) {
       for (const p of pontos) {
@@ -1020,7 +1145,7 @@
         porPonto.set(p.id, {
           pag,
           ...(await imagem(proj, {
-            pag, marcas: marcasDa(pag, p), px: 1500, giro: giroDe(pag),
+            pag, ...camadaDa(pag, p), px: 1500, giro: giroDe(pag),
             recorte: { x: p.croqui.x, y: p.croqui.y, largura: 0.42, proporcao: PROPORCAO_RECORTE },
           })),
         });

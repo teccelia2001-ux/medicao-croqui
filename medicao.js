@@ -523,6 +523,20 @@
       doc.setFillColor(234, 88, 12);
       doc.circle(M + 50, topoImg + ih + 3.2, 1.3, "F");
       doc.text("ponto marcado sem serviço", M + 53, topoImg + ih + 4);
+      // vão: losango roxo na linha tracejada, com a metragem; anotação do campo em azul
+      const lx = M + 100, ly = topoImg + ih + 3.2;
+      doc.setDrawColor(124, 58, 237);
+      doc.setLineWidth(0.5);
+      doc.setLineDashPattern([0.9, 0.6], 0);
+      doc.line(lx - 2.5, ly, lx + 2.5, ly);
+      doc.setLineDashPattern([], 0);
+      doc.setFillColor(255, 255, 255);
+      doc.lines([[1.2, 1.2], [1.2, -1.2], [-1.2, -1.2], [-1.2, 1.2]], lx - 1.2, ly, [1, 1], "FD", true);
+      doc.text("vão (metragem)", lx + 4, topoImg + ih + 4);
+      doc.setFillColor(29, 78, 216);
+      doc.circle(lx + 30, ly, 1.1, "F");
+      doc.text("anotação do campo", lx + 33, topoImg + ih + 4);
+      doc.setLineWidth(0.2);
     }
 
     // medição por ponto, com as fotos
