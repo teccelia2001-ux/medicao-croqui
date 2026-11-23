@@ -426,6 +426,20 @@
       let trocouAberta = null;
       for (const r of lista) {
         const local = locais.get(r.id);
+        // o banco tem menos postes do que este aparelho tem lançados (cópia velha subiu por cima,
+        // mesmo com hora mais antiga): confere a obra inteira e, se perdeu, a daqui sobe de novo
+        if (local && !local.pendente && !deOutro(local) && !modoFotos()
+          && local.pontos.filter((p) => !p.geral && !p.vao && temConteudo(p)).length > Number(r.qtd_pontos || 0)) {
+          try {
+            const inteira = await Nuvem.baixarObra(r.id);
+            if (inteira && bancoPerdeu(local, inteira)) {
+              await Banco.salvarObra(local); // marca para envio (junta com o banco antes de subir)
+              enviarDepois(500);
+              avisar(`Obra ${local.numero}: o banco estava com menos pontos que este aparelho. A cópia daqui vai subir.`, "guardado", 9000);
+              continue;
+            }
+          } catch (e) { /* confere na próxima busca */ }
+        }
         if (local && !local.pendente && r.atualizada_em && new Date(r.atualizada_em) > new Date(local.atualizada_em)) {
           const aberta = estado.obra?.id === r.id;
           if (aberta && !podeTrocarAberta()) continue; // fica para a próxima busca
