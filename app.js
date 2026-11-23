@@ -416,7 +416,9 @@
         for (const o of locais.values()) {
           // no banco desde antes de pedir a lista (a que acabou de subir pode ainda não constar)
           const antiga = o.enviada_em && new Date(o.enviada_em).getTime() < pedidaEm - 60000;
-          if (!o.pendente && antiga && !noBanco.has(o.id) && estado.obra?.id !== o.id) await Banco.excluirObra(o.id);
+          // obra de outro dono não está na lista (o banco só mostra as suas): fica guardada,
+          // só escondida. Só sai a sua que sumiu do banco (excluída em outro aparelho)
+          if (!o.pendente && antiga && !noBanco.has(o.id) && estado.obra?.id !== o.id && !deOutro(o) && (!o.dono_id || o.dono_id === estado.perfil?.user_id)) await Banco.excluirObra(o.id);
         }
       }
       // obra parada no aparelho e mais nova no banco: traz a versão do banco (alterada em outro
