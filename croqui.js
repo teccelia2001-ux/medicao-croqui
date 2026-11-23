@@ -1365,6 +1365,39 @@
   }
 
 
+  /** Texto da faixa escrita na foto pelo app ("OBRA 0032601406 · P5" e a data): a tarja preta
+   *  embaixo, com letra branca. Serve para remontar a obra pelas fotos que estão só no banco
+   *  (a foto baixada não traz o texto da faixa). Devolve o texto lido ("" se não leu). */
+  async function lerFaixa(blob) {
+    const img = await createImageBitmap(blob);
+    const w = img.width, h = img.height;
+    const fs = Math.max(14, Math.round(Math.min(w, h) * 0.032)); // mesma conta do carimbo do app
+    const alt = Math.min(h, Math.ceil(fs * 3.6));
+    const k = Math.max(1, Math.min(3, 60 / fs)); // letra com uns 60 px de altura
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(w * k);
+    cv.height = Math.round(alt * k);
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(img, 0, h - alt, w, alt, 0, 0, cv.width, cv.height);
+    img.close?.();
+    // letra branca na tarja preta -> preta no branco
+    const d = ctx.getImageData(0, 0, cv.width, cv.height), p = d.data;
+    for (let i = 0; i < p.length; i += 4) {
+      const v = (p[i] + p[i + 1] + p[i + 2]) / 3 > 140 ? 0 : 255;
+      p[i] = p[i + 1] = p[i + 2] = v;
+    }
+    ctx.putImageData(d, 0, 0);
+    const wk = await prepararLeitura(1);
+    try {
+      await wk.setParameters({ tessedit_pageseg_mode: "6" }); // um bloco de texto
+      const { data } = await wk.recognize(cv);
+      return String(data.text || "").trim();
+    } finally {
+      await wk.setParameters({ tessedit_pageseg_mode: "11" }); // volta ao da leitura do projeto
+      cv.width = cv.height = 0;
+    }
+  }
+
   /** Preto no branco: o rótulo é azul/vermelho/verde; o OCR lê bem melhor sem cor. */
   function pretoBranco(cv) {
     const ctx = cv.getContext("2d");
@@ -2225,5 +2258,5 @@
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
-  window.Croqui = { Visor, imagem, paginas, paraPdf, croquiAnotado, acharPosteSimbolo, postesPerto, linhaDoVao, AZUL, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  window.Croqui = { lerFaixa, Visor, imagem, paginas, paraPdf, croquiAnotado, acharPosteSimbolo, postesPerto, linhaDoVao, AZUL, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
 })();

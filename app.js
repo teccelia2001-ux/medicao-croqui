@@ -922,7 +922,32 @@
      ("OBRA 0032601406 · P5", data, UTM). Foto que não está em nenhum ponto da obra: o ponto
      dela volta (nome, fotos, UTM e data, no lugar do (P) dele no croqui). Os serviços não
      voltam: só existiam na obra apagada. */
-  let orfasDe = { obraId: null, grupos: [], em: 0 };
+  let orfasDe = { obraId: null, grupos: [], noBanco: [], em: 0 };
+  /** fotos da obra que estão só no banco e não estão em nenhum ponto (nem neste aparelho) */
+  async function fotosSoNoBanco(o, grupos) {
+    if (!navigator.onLine || !Nuvem.lerSessao()) return [];
+    let lista;
+    try { lista = await Nuvem.listarFotosInfo(o.id); } catch (e) { return []; }
+    const usadas = new Set(o.pontos.flatMap((p) => [...(p.fotos || []), ...(p.fotos_fora || [])]));
+    const daqui = new Set(grupos.flatMap((g) => g.fotos.map((f) => f.id)));
+    const locais = new Set((await Banco.fotosDaObra(o.id)).map((f) => f.id));
+    return lista.filter((f) => !usadas.has(f.id) && !daqui.has(f.id) && !locais.has(f.id));
+  }
+  /** nome do ponto e dia lidos na faixa da foto ("OBRA 0032601406 · P5" / "21/11/2026 10:30") */
+  function textoDaFaixa(txt) {
+    const limpo = String(txt || "").replace(/[|]/g, " ");
+    let nome = "";
+    for (const l of limpo.split(/\n+/)) {
+      const m = l.match(/OBRA\s*[0-9OoSsIl]{5,}\s*[·.•:,;\-]*\s*(.+)$/i);
+      if (m) { nome = m[1].trim(); break; }
+    }
+    if (!nome) nome = (limpo.match(/\bP\s?[0-9OSIlB]{1,4}(?:[.\-][0-9]+)?[A-Z]?\b/i) || [""])[0];
+    // P + número: o leitor troca 0/O, 5/S, 1/I/l, 8/B
+    const p = nome.replace(/\s+/g, "").match(/^P([0-9OSIlB]{1,4})((?:[.\-][0-9]+)?[A-Z]?)/i);
+    if (p) nome = "P" + p[1].replace(/[Oo]/g, "0").replace(/[Ss]/g, "5").replace(/[Il]/g, "1").replace(/B/g, "8") + p[2].toUpperCase();
+    const dm = limpo.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    return { nome: nome.trim(), dia: dm ? `${dm[3]}-${dm[2]}-${dm[1]}` : "" };
+  }
   /** fotos deste aparelho, desta obra, que não estão em nenhum ponto, juntas por ponto */
   async function gruposSemPonto(o) {
     const fotos = await Banco.fotosDaObra(o.id);
@@ -950,16 +975,20 @@
   async function conferirFotosSemPonto(o) {
     if (!o || soLeitura(o)) return;
     if (orfasDe.obraId === o.id && Date.now() - orfasDe.em < 4000) return;
-    const antes = orfasDe.obraId === o.id ? orfasDe.grupos.length : -1;
-    orfasDe = { obraId: o.id, grupos: await gruposSemPonto(o), em: Date.now() };
-    if (orfasDe.grupos.length !== antes && estado.tela === "obra" && estado.obra?.id === o.id) render();
+    const antes = orfasDe.obraId === o.id ? `${orfasDe.grupos.length}|${orfasDe.noBanco.length}` : "";
+    orfasDe = { ...orfasDe, obraId: o.id, em: Date.now() };
+    const grupos = await gruposSemPonto(o);
+    const noBanco = await fotosSoNoBanco(o, grupos);
+    orfasDe = { obraId: o.id, grupos, noBanco, em: Date.now() };
+    if (`${grupos.length}|${noBanco.length}` !== antes && estado.tela === "obra" && estado.obra?.id === o.id) render();
   }
   function faixaRemontar(o) {
-    if (soLeitura(o) || orfasDe.obraId !== o.id || !orfasDe.grupos.length) return "";
+    if (soLeitura(o) || orfasDe.obraId !== o.id || (!orfasDe.grupos.length && !orfasDe.noBanco.length)) return "";
     const n = orfasDe.grupos.reduce((t, g) => t + g.fotos.length, 0);
+    const nb = orfasDe.noBanco.length;
     const novos = orfasDe.grupos.filter((g) => !g.existe).length;
     return `<div class="faixa faixa-guardado faixa-remontar">
-      <span>📷 <b>${plural(n, "foto deste aparelho não está", "fotos deste aparelho não estão")} em nenhum ponto</b>${novos ? ` (${plural(novos, "ponto que não existe mais", "pontos que não existem mais")} na obra)` : ""}.</span>
+      <span>📷 <b>${n ? plural(n, "foto deste aparelho", "fotos deste aparelho") : ""}${n && nb ? " e " : ""}${nb ? plural(nb, "foto só do banco", "fotos só do banco") : ""} sem ponto</b>${novos ? ` (${plural(novos, "ponto que não existe mais", "pontos que não existem mais")} na obra)` : ""}.</span>
       <button type="button" class="botao botao-pequeno" data-acao="remontar-fotos">Remontar os pontos pelas fotos</button>
     </div>`;
   }
@@ -980,10 +1009,50 @@
     const o = estado.obra;
     if (!o || soLeitura(o)) return;
     const grupos = await gruposSemPonto(o);
-    if (!grupos.length) return avisar("Todas as fotos deste aparelho já estão nos pontos.");
+    const soBanco = await fotosSoNoBanco(o, grupos);
+    let naoLidas = 0;
+    if (soBanco.length) {
+      // ponto pelo nome: o que já existe na obra, ou o que vai voltar pelas fotos daqui
+      const porNome = new Map();
+      for (const p of o.pontos) if (!p.vao && !p.geral) porNome.set(String(p.nome).toUpperCase(), { id: p.id, existe: true });
+      for (const g of grupos) if (g.nome && !porNome.has(g.nome.toUpperCase())) porNome.set(g.nome.toUpperCase(), { id: g.pontoId, existe: g.existe });
+      const porId = new Map(grupos.map((g) => [g.pontoId, g]));
+      let k = 0;
+      for (const info of soBanco) {
+        avisar(`Lendo as fotos do banco… ${++k} de ${soBanco.length}`, "guardado", 60000);
+        try {
+          const blob = await Nuvem.baixarFoto(o.id, info.id);
+          const lido = textoDaFaixa(await Croqui.lerFaixa(blob));
+          let pid = String(info.id).includes("__") ? String(info.id).split("__")[0] : null;
+          if (!pid && lido.nome) {
+            const ja = porNome.get(lido.nome.toUpperCase());
+            pid = ja ? ja.id : novoId();
+            if (!ja) porNome.set(lido.nome.toUpperCase(), { id: pid, existe: false });
+          }
+          if (!pid) { naoLidas++; continue; }
+          const foto = { id: info.id, obraId: o.id, pontoId: pid, blob, enviada: true, criada_em: info.criada_em || (lido.dia ? `${lido.dia}T12:00:00.000Z` : null) };
+          await Banco.salvarFoto(foto);
+          if (!porId.has(pid)) {
+            const g = { pontoId: pid, nome: lido.nome, fotos: [], gps: null, dia: lido.dia, existe: o.pontos.some((p) => p.id === pid), doBanco: true };
+            porId.set(pid, g);
+            grupos.push(g);
+          }
+          const g = porId.get(pid);
+          g.fotos.push(foto);
+          if (!g.nome && lido.nome) g.nome = lido.nome;
+          if (lido.dia && (!g.dia || lido.dia < g.dia)) g.dia = lido.dia;
+        } catch (e) {
+          if (e.status === 0) { avisar("Sem internet para baixar as fotos do banco.", "erro"); return; }
+          naoLidas++;
+        }
+      }
+      $aviso.hidden = true;
+      grupos.sort((x, y) => String(x.nome).localeCompare(String(y.nome), "pt-BR", { numeric: true }));
+    }
+    if (!grupos.length) return avisar(naoLidas ? `${plural(naoLidas, "foto do banco não pôde ser lida", "fotos do banco não puderam ser lidas")}: não deu para saber o ponto.` : "Todas as fotos já estão nos pontos.");
     const novos = grupos.filter((g) => !g.existe);
-    const lista = grupos.slice(0, 40).map((g) => `${g.nome || "(sem nome)"}: ${plural(g.fotos.length, "foto", "fotos")}${g.existe ? " (o ponto existe)" : ""}`).join("\n");
-    if (!confirm(`Remontar ${plural(novos.length, "ponto", "pontos")} e devolver as fotos aos pontos:\n\n${lista}${grupos.length > 40 ? "\n…" : ""}\n\nOs serviços lançados não voltam (só existiam na obra apagada): lance de novo olhando as fotos.`)) return;
+    const lista = grupos.slice(0, 40).map((g) => `${g.nome || "(sem nome)"}: ${plural(g.fotos.length, "foto", "fotos")}${g.existe ? " (o ponto existe)" : ""}${g.doBanco ? " · lido na foto do banco" : ""}`).join("\n");
+    if (!confirm(`Remontar ${plural(novos.length, "ponto", "pontos")} e devolver as fotos aos pontos:\n\n${lista}${grupos.length > 40 ? "\n…" : ""}${naoLidas ? `\n\n${plural(naoLidas, "foto do banco não pôde ser lida", "fotos do banco não puderam ser lidas")} (ficam de fora).` : ""}\n\nO nome lido na foto do banco pode vir errado: confira depois. Os serviços lançados não voltam (só existiam na obra apagada): lance de novo olhando as fotos.`)) return;
     let criados = 0, fotos = 0, semLugar = 0;
     for (const g of grupos) {
       let p = o.pontos.find((x) => x.id === g.pontoId);
@@ -999,7 +1068,7 @@
       for (const f of g.fotos) if (!p.fotos.includes(f.id)) { p.fotos.push(f.id); fotos++; }
     }
     await salvarAgora();
-    orfasDe = { obraId: null, grupos: [], em: 0 };
+    orfasDe = { obraId: null, grupos: [], noBanco: [], em: 0 };
     avisar(`${plural(criados, "ponto remontado", "pontos remontados")} com ${plural(fotos, "foto", "fotos")}.${semLugar ? ` ${plural(semLugar, "ponto ficou", "pontos ficaram")} fora do croqui: abra ${semLugar === 1 ? "o ponto" : "cada um"} e use "Marcar no croqui".` : ""} Agora lance os serviços de novo.`, "ok", 10000);
     render();
   }
