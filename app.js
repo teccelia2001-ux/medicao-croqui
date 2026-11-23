@@ -190,12 +190,24 @@
       // serviço feita aqui não volta; o que outro aparelho lançou entra)
       if (b && al === b) { troca(lp, rp); entraram++; continue; }
       if (b && ar === b) continue;
-      // os dois mudaram (ou cópia antiga, sem base): fotos tiradas do ponto ficam fora dos dois lados
+      // os dois mudaram (ou cópia antiga, sem base): fotos e serviços tirados ficam fora
       const fotosFora = new Set([...(lp.fotos_fora || []), ...(rp.fotos_fora || [])]);
+      const itensForaAqui = new Set(lp.itens_fora || []);
+      const itensForaLa = new Set(rp.itens_fora || []);
+      const naBase = (() => { try { const bp = b ? JSON.parse(b) : null; return (sid) => !bp || (bp.itens || []).some((i) => i.sid === sid); } catch (e) { return () => true; } })();
       const rpFotos = (rp.fotos || []).filter((f) => !fotosFora.has(f));
-      if (!b && qtd({ ...rp, fotos: rpFotos }) > qtd(lp)) { troca(lp, rp); entraram++; }
-      else for (const f of rpFotos) if (!lp.fotos.includes(f)) lp.fotos.push(f);
-      if (fotosFora.size) { lp.fotos_fora = [...fotosFora]; lp.fotos = (lp.fotos || []).filter((f) => !fotosFora.has(f)); }
+      const rpItens = (rp.itens || []).filter((i) => !itensForaAqui.has(i.sid));
+      if (!b && qtd({ ...rp, fotos: rpFotos, itens: rpItens }) > qtd(lp)) { troca(lp, rp); entraram++; }
+      else {
+        for (const f of rpFotos) if (!lp.fotos.includes(f)) lp.fotos.push(f);
+        for (const i of rpItens) if (!lp.itens.some((x) => x.sid === i.sid)) lp.itens.push(structuredClone(i));
+      }
+      // removido aqui não volta; removido lá sai daqui (menos o que foi lançado aqui depois)
+      lp.itens = (lp.itens || []).filter((i) => !itensForaAqui.has(i.sid) && !(itensForaLa.has(i.sid) && naBase(i.sid)));
+      lp.fotos = (lp.fotos || []).filter((f) => !fotosFora.has(f));
+      if (fotosFora.size) lp.fotos_fora = [...fotosFora];
+      const itensFora = [...new Set([...itensForaAqui, ...itensForaLa])].filter((sid) => !lp.itens.some((i) => i.sid === sid));
+      if (itensFora.length) lp.itens_fora = itensFora; else delete lp.itens_fora;
     }
     // excluído de propósito (aqui ou em outro aparelho): sai, mesmo com coisa lançada. Antes só
     // saía se estivesse vazio, e o ponto excluído voltava pela cópia do outro aparelho
@@ -3426,6 +3438,7 @@
         sid: s.id, codigo: s.codigo, descricao: s.descricao, operacao: s.operacao, departamento: s.departamento,
         us: s.us, valor_us: M.valorUS(s.departamento, ano), quantidade: estado.qtd,
       });
+      if (p.itens_fora?.includes(sid)) p.itens_fora = p.itens_fora.filter((x) => x !== sid);
       algum = true;
     }
     if (!algum) return;
@@ -3934,7 +3947,10 @@
       case "adicionar-ambos": return adicionarItens(alvo.dataset.sids.split(",").map(Number));
       case "remover-item": {
         const p = ponto();
-        p.itens = p.itens.filter((i) => i.sid !== Number(alvo.dataset.sid));
+        const sid = Number(alvo.dataset.sid);
+        p.itens = p.itens.filter((i) => i.sid !== sid);
+        // anotado como removido: não volta pela cópia do banco ou de outro aparelho
+        if (!(p.itens_fora ||= []).includes(sid)) p.itens_fora.push(sid);
         salvarAgora();
         return render();
       }
