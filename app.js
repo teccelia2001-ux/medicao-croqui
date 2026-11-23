@@ -167,12 +167,12 @@
    *  (menos o que foi excluído aqui); o mesmo ponto fica o daqui, menos quando o do banco tem
    *  mais coisa lançada (a daqui era cópia velha). Fotos dos dois lados ficam. */
   async function juntarComOBanco(o) {
-    let v;
-    try { v = await Nuvem.versaoObra(o.id); } catch (e) { if (e.status === 0) throw e; return o; }
-    if (!v) return o; // ainda não está no banco
-    if (o.base_em && new Date(v).getTime() <= new Date(o.base_em).getTime()) return o; // ninguém mexeu
-    const r = await Nuvem.baixarObra(o.id);
-    if (!r) return o;
+    // sempre confere a obra inteira do banco: a hora gravada é a do relógio do aparelho que
+    // mexeu, e não serve para saber se o banco mudou (a 0032601406 remontada foi recusada assim)
+    let r;
+    try { r = await Nuvem.baixarObra(o.id); } catch (e) { if (e.status === 0) throw e; return o; }
+    if (!r) return o; // ainda não está no banco
+    const v = r.atualizada_em;
     const fora = new Set(o.pontos_fora || []);
     const foraBanco = new Set(foraDoBanco(r));
     const aqui = new Map(o.pontos.map((p) => [p.id, p]));
