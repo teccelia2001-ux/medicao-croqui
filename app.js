@@ -2698,6 +2698,17 @@
       ["64208", "Nu ≤ 2/0 MT", "m"], ["64202", "Nu > 2/0 MT", "m"], ["64210", "Nu ≤ 2/0 BT", "m"],
     ]],
   ];
+  /** condutor do vão que pode ir x3 (três fases): todos os do CONDUTOR menos multiplex e
+   *  cordoalha (pedido 23/11/2026) */
+  const SEM_X3 = new Set(["64228", "62051", "62099"]);
+  const CONDUTOR_X3 = new Set(VAO_RAPIDOS.find(([t]) => t === "CONDUTOR")[1].map(([cod]) => cod).filter((cod) => !SEM_X3.has(cod)));
+  function botaoVezes3(g) {
+    if (!g.x3Pode) return "";
+    const q = M.numero(estado.qtd);
+    const base = g.x3 ? q / 3 : q;
+    const conta = q > 0 ? (g.x3 ? ` · ${M.fmtQtd(Math.round(base * 10000) / 10000)} m × 3 = ${M.fmtQtd(q)} m` : ` · ${M.fmtQtd(q)} m × 3 = ${M.fmtQtd(Math.round(q * 3 * 10000) / 10000)} m`) : "";
+    return `<button type="button" class="vezes3${g.x3 ? " vezes3-ligado" : ""}" data-acao="vezes-3" aria-pressed="${g.x3 ? "true" : "false"}">${g.x3 ? "✓ " : ""}×3 · três fases${conta}</button>`;
+  }
   /** Serviços do vão: os por metro já com a metragem e os espaçadores já com a quantidade
    *  informada. Tocar abre a quantidade para conferir e lançar (instalar ou retirar). */
   function vaoServicosHtml(p) {
@@ -2794,19 +2805,30 @@
         <div class="folha-topo"><b>${esc(g.rotulo || g.codigo)}</b><button type="button" class="remover" data-acao="fechar-folha" aria-label="Fechar">×</button></div>
         <p>${g.rotulo ? `<small class="sub">Código ${esc(g.codigo)}</small>` : `${esc(g.descricao)} <i class="sigla sigla-${esc(sigla(g.departamento).replace("&", "").toLowerCase())}">${esc(sigla(g.departamento))}</i>`}</p>
         <div class="campo">Quantidade ${campoQtd(estado.qtd, `id="qtd-folha" aria-label="Quantidade"`, true)}</div>
+        ${botaoVezes3(g)}
         <div class="opcoes${ambos ? " opcoes-ambos" : ""}">
           ${g.opcoes.map((s) => {
             const ja = p.itens.some((i) => i.sid === s.id);
-            const valor = M.valorItem({ quantidade: estado.qtd, us: s.us, valor_us: M.valorUS(s.departamento, ano) });
-            const botao = `<button type="button" class="opcao opcao-${(s.operacao || "").toLowerCase()}${g.opSugerida === s.operacao ? " opcao-sugerida" : ""}" data-acao="adicionar" data-sid="${s.id}" ${ja || !qtdOk ? "disabled" : ""}>
-              ${ja ? "✓ " : ""}${esc(ROTULO[s.operacao] ?? s.operacao)}<small data-valor-op="${s.id}">${qtdOk ? M.fmtMoeda(valor) : ""}</small></button>`;
+            const botao = `<button type="button" class="opcao opcao-${(s.operacao || "").toLowerCase()}${g.opSugerida === s.operacao ? " opcao-sugerida" : ""}${ja ? " opcao-somar" : ""}" data-acao="adicionar" data-sid="${s.id}" ${!qtdOk ? "disabled" : ""}>
+              ${ja ? "✓ " : ""}${esc(ROTULO[s.operacao] ?? s.operacao)}<small data-valor-op="${s.id}">${textoOpcao(p, s, ano)}</small></button>`;
             // entre Instalar e Retirar: os dois de uma vez, com a mesma quantidade
             return ambos && s === ambos[0] ? botao + `<button type="button" class="opcao-ambos" data-acao="adicionar-ambos" data-sids="${ambos.map((x) => x.id).join(",")}" data-ambos ${qtdOk ? "" : "disabled"} aria-label="Lançar instalar e retirar" title="Lançar instalar e retirar">⇅<small>os dois</small></button>` : botao;
           }).join("")}
         </div>
         ${!qtdOk ? `<small class="folha-dica">Digite a quantidade e escolha o tipo.</small>` : ""}
+        ${g.opcoes.some((s) => p.itens.some((i) => i.sid === s.id)) ? `<small class="folha-dica-soma">✓ Já lançado: digite só o que falta e toque nele para <b>somar</b>.</small>` : ""}
       </div>
     </div>`;
+  }
+  /** embaixo do Instalar/Retirar: o valor; no já lançado, quanto tem e o total se somar */
+  function textoOpcao(p, s, ano) {
+    const qtdOk = M.numero(estado.qtd) > 0;
+    const ja = p.itens.find((i) => i.sid === s.id);
+    if (ja) {
+      const tem = M.numero(ja.quantidade);
+      return qtdOk ? `somar → total ${esc(M.fmtQtd(Math.round((tem + M.numero(estado.qtd)) * 10000) / 10000))}` : `lançado: ${esc(M.fmtQtd(tem))}`;
+    }
+    return qtdOk ? M.fmtMoeda(M.valorItem({ quantidade: estado.qtd, us: s.us, valor_us: M.valorUS(s.departamento, ano) })) : "";
   }
 
   function fotoHtml() {
@@ -3431,9 +3453,20 @@
     if (!p.dia) p.dia = hoje(); // ponto achado no projeto: a data é a do 1º serviço lançado
     const ano = Number((p.dia || hoje()).slice(0, 4));
     let algum = false;
+    const somados = [];
     for (const sid of sids) {
       const s = M.POR_ID.get(sid);
-      if (!s || p.itens.some((i) => i.sid === sid)) continue;
+      if (!s) continue;
+      // já lançado: soma o que faltava (pedido 23/11/2026)
+      const ja = p.itens.find((i) => i.sid === sid);
+      if (ja) {
+        const antes = M.numero(ja.quantidade), mais = M.numero(estado.qtd);
+        const total = Math.round((antes + mais) * 10000) / 10000;
+        ja.quantidade = String(total).replace(".", ",");
+        somados.push(`${ROTULO[s.operacao] ?? s.operacao}: ${M.fmtQtd(antes)} + ${M.fmtQtd(mais)} = ${M.fmtQtd(total)}`);
+        algum = true;
+        continue;
+      }
       p.itens.push({
         sid: s.id, codigo: s.codigo, descricao: s.descricao, operacao: s.operacao, departamento: s.departamento,
         us: s.us, valor_us: M.valorUS(s.departamento, ano), quantidade: estado.qtd,
@@ -3443,7 +3476,9 @@
     }
     if (!algum) return;
     salvarAgora();
+    if (somados.length) avisar(`Somado. ${somados.join(" · ")}`, "ok", 5000);
     estado.qtd = "";
+    if (estado.escolhido) estado.escolhido.x3 = false; // quantidade nova começa sem o x3
     // código com instalar e retirar continua aberto para lançar o outro tipo
     const faltam = estado.escolhido.opcoes.filter((o) => !p.itens.some((i) => i.sid === o.id));
     if (!faltam.length) estado.escolhido = null;
@@ -3530,10 +3565,11 @@
     const ano = Number((p.dia || hoje()).slice(0, 4));
     document.querySelectorAll("[data-valor-op]").forEach((el) => {
       const s = M.POR_ID.get(Number(el.dataset.valorOp));
-      el.textContent = qtdOk ? M.fmtMoeda(M.valorItem({ quantidade: estado.qtd, us: s.us, valor_us: M.valorUS(s.departamento, ano) })) : "";
-      const ja = p.itens.some((i) => i.sid === s.id);
-      el.parentElement.disabled = ja || !qtdOk;
+      el.innerHTML = textoOpcao(p, s, ano);
+      el.parentElement.disabled = !qtdOk;
     });
+    const x3 = document.querySelector('[data-acao="vezes-3"]');
+    if (x3 && estado.escolhido) x3.outerHTML = botaoVezes3(estado.escolhido);
     document.querySelectorAll("[data-ambos]").forEach((b) => { b.disabled = !qtdOk; });
     const dica = document.querySelector(".folha-dica");
     if (dica) dica.hidden = qtdOk;
@@ -3825,8 +3861,16 @@
       case "vao-servico": { // serviço do vão: abre a quantidade com a metragem ou os espaçadores
         const g = grupos().find((x) => x.chave === alvo.dataset.chave);
         if (!g) return avisar("Esse código não está no catálogo baixado.", "erro");
-        estado.escolhido = { ...g, rotulo: alvo.dataset.rotulo };
+        estado.escolhido = { ...g, rotulo: alvo.dataset.rotulo, x3Pode: CONDUTOR_X3.has(g.codigo), x3: false };
         estado.qtd = alvo.dataset.qtd || "";
+        return render();
+      }
+      case "vezes-3": { // condutor do vão: a metragem x3 (três fases), ou volta
+        const g = estado.escolhido;
+        if (!g?.x3Pode) return;
+        const q = M.numero(estado.qtd);
+        if (q > 0) estado.qtd = String(Math.round((g.x3 ? q / 3 : q * 3) * 10000) / 10000).replace(".", ",");
+        g.x3 = !g.x3;
         return render();
       }
       case "cq-vao": { // abre (ou cria) o vão entre os dois postes tocados

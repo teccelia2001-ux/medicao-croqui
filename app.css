@@ -1247,3 +1247,10 @@ body { max-width: 100vw; }
 
 /* remontar a obra pelas fotos */
 .faixa-remontar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* serviço já lançado: o botão soma a quantidade digitada */
+.opcao-somar small { font-weight: 700; }
+.folha-dica-soma { display: block; margin-top: 8px; text-align: center; color: #15803d; }
+/* condutor do vão: metragem x3 (três fases) */
+.vezes3 { display: block; width: 100%; margin: 4px 0 10px; padding: 10px 12px; border: 2px dashed #7c3aed; border-radius: 12px; background: #f5f3ff; color: #6d28d9; font: 800 15px/1.2 Inter, system-ui, sans-serif; cursor: pointer; }
+.vezes3-ligado { border-style: solid; background: #7c3aed; color: #fff; }
