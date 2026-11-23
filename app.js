@@ -185,9 +185,11 @@
       if (qtd(rp) > qtd(lp)) { Object.keys(lp).forEach((k) => delete lp[k]); Object.assign(lp, rp); entraram++; continue; }
       for (const f of rp.fotos || []) if (!lp.fotos.includes(f) && !(lp.fotos_fora || []).includes(f)) lp.fotos.push(f);
     }
-    // excluído no outro aparelho e intacto aqui: sai daqui também
-    o.pontos = o.pontos.filter((p) => !(foraBanco.has(p.id) && !temConteudo(p)));
+    // excluído de propósito (aqui ou em outro aparelho): sai, mesmo com coisa lançada. Antes só
+    // saía se estivesse vazio, e o ponto excluído voltava pela cópia do outro aparelho
     o.pontos_fora = [...new Set([...(o.pontos_fora || []), ...foraBanco])];
+    const todosFora = new Set(o.pontos_fora);
+    o.pontos = o.pontos.filter((p) => !todosFora.has(p.id));
     o.fotos_info = { ...(r.fotos || {}), ...(o.fotos_info || {}) };
     o.base_em = v;
     await Banco.salvarObra(o, { envio: true });
@@ -489,7 +491,7 @@
     const remota = estado.remotas?.find((x) => x.id === id);
     const obra = {
       id: r.id, numero: r.numero, local: r.local || "", municipio: r.municipio || "", departamento: r.departamento,
-      equipe: r.equipe || "", obs: r.obs || "", pontos: r.pontos || [], fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, pontos_fora, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null, pontos_fora: foraDoBanco(r),
+      equipe: r.equipe || "", obs: r.obs || "", pontos: (r.pontos || []).filter((p) => !foraDoBanco(r).includes(p.id)), fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, pontos_fora, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null, pontos_fora: foraDoBanco(r),
       criada_em: r.criada_em, atualizada_em: r.atualizada_em, pendente: false, enviada_em: r.recebida_em,
       dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null, base_em: r.atualizada_em,
     };
