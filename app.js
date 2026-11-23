@@ -146,7 +146,7 @@
   const idDaFoto = (p) => (modoFotos() ? `${p.id}__${novoId()}` : novoId());
 
   /** o conteúdo da obra (sem o que só diz do envio): igual = nada mudou */
-  const FORA_DA_ASSINATURA = new Set(["pendente", "atualizada_em", "enviada_em", "erro_envio", "fotos_info", "dono", "dono_id", "base_em", "supervisor_nome"]);
+  const FORA_DA_ASSINATURA = new Set(["pendente", "atualizada_em", "enviada_em", "erro_envio", "fotos_info", "dono", "dono_id", "base_em", "base_pontos", "supervisor_nome"]);
   const assinatura = (o) => JSON.stringify(o, (k, v) => (FORA_DA_ASSINATURA.has(k) ? undefined : v));
   /** pontos com alguma coisa lançada (serviço, foto ou observação) */
   const temConteudo = (p) => !!((p.itens && p.itens.length) || (p.fotos && p.fotos.length) || (p.obs || "").trim());
@@ -178,12 +178,24 @@
     const aqui = new Map(o.pontos.map((p) => [p.id, p]));
     const qtd = (p) => (p.itens?.length || 0) + (p.fotos?.length || 0) + ((p.obs || "").trim() ? 1 : 0);
     let entraram = 0;
+    const base = o.base_pontos || null;
+    const troca = (lp, rp) => { Object.keys(lp).forEach((k) => delete lp[k]); Object.assign(lp, structuredClone(rp)); };
     for (const rp of r.pontos || []) {
       if (fora.has(rp.id)) continue;
       const lp = aqui.get(rp.id);
       if (!lp) { o.pontos.push(rp); entraram++; continue; }
-      if (qtd(rp) > qtd(lp)) { Object.keys(lp).forEach((k) => delete lp[k]); Object.assign(lp, rp); entraram++; continue; }
-      for (const f of rp.fotos || []) if (!lp.fotos.includes(f) && !(lp.fotos_fora || []).includes(f)) lp.fotos.push(f);
+      const al = Nuvem.assinaturaPonto(lp), ar = Nuvem.assinaturaPonto(rp), b = base?.[rp.id];
+      if (al === ar) continue;
+      // só um lado mudou desde a última versão vista: vale o que mudou (exclusão de foto ou de
+      // serviço feita aqui não volta; o que outro aparelho lançou entra)
+      if (b && al === b) { troca(lp, rp); entraram++; continue; }
+      if (b && ar === b) continue;
+      // os dois mudaram (ou cópia antiga, sem base): fotos tiradas do ponto ficam fora dos dois lados
+      const fotosFora = new Set([...(lp.fotos_fora || []), ...(rp.fotos_fora || [])]);
+      const rpFotos = (rp.fotos || []).filter((f) => !fotosFora.has(f));
+      if (!b && qtd({ ...rp, fotos: rpFotos }) > qtd(lp)) { troca(lp, rp); entraram++; }
+      else for (const f of rpFotos) if (!lp.fotos.includes(f)) lp.fotos.push(f);
+      if (fotosFora.size) { lp.fotos_fora = [...fotosFora]; lp.fotos = (lp.fotos || []).filter((f) => !fotosFora.has(f)); }
     }
     // excluído de propósito (aqui ou em outro aparelho): sai, mesmo com coisa lançada. Antes só
     // saía se estivesse vazio, e o ponto excluído voltava pela cópia do outro aparelho
@@ -192,6 +204,7 @@
     o.pontos = o.pontos.filter((p) => !todosFora.has(p.id));
     o.fotos_info = { ...(r.fotos || {}), ...(o.fotos_info || {}) };
     o.base_em = v;
+    o.base_pontos = Nuvem.basePontos(r.pontos);
     await Banco.salvarObra(o, { envio: true });
     if (entraram) avisar(`Obra ${o.numero}: ${plural(entraram, "ponto do banco foi juntado", "pontos do banco foram juntados")} com os deste aparelho.`, "guardado", 6000);
     // a aberta mostra os pontos juntados (se ninguém está mexendo nela agora)
@@ -493,7 +506,7 @@
       id: r.id, numero: r.numero, local: r.local || "", municipio: r.municipio || "", departamento: r.departamento,
       equipe: r.equipe || "", obs: r.obs || "", pontos: (r.pontos || []).filter((p) => !foraDoBanco(r).includes(p.id)), fotos_info: r.fotos || {}, projeto: r.projeto ? (({ anotacoes, rotulos, pontos_fora, ...resto }) => resto)(r.projeto) : null, anotacoes: r.projeto?.anotacoes || null, rotulos: r.projeto?.rotulos || null, pontos_fora: foraDoBanco(r),
       criada_em: r.criada_em, atualizada_em: r.atualizada_em, pendente: false, enviada_em: r.recebida_em,
-      dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null, base_em: r.atualizada_em,
+      dono, dono_id: r.supervisor_id, supervisor_nome: remota?.supervisor_nome || null, base_em: r.atualizada_em, base_pontos: Nuvem.basePontos(r.pontos),
     };
     await juntarFotosDaqui(obra);
     await Banco.salvarObra(obra, { envio: true });
@@ -3972,7 +3985,8 @@
         if (soLeitura(o) || !confirm("Tirar esta foto do ponto? Ela sai da medição, mas continua guardada no celular e no banco.")) return;
         const p = ponto();
         p.fotos = p.fotos.filter((id) => id !== estado.foto.id);
-        if (String(estado.foto.id).includes("__")) (p.fotos_fora ||= []).push(estado.foto.id);
+        // anotada como tirada: não volta pela cópia do banco nem como "foto sem ponto"
+        if (!(p.fotos_fora ||= []).includes(estado.foto.id)) p.fotos_fora.push(estado.foto.id);
         estado.foto = null;
         await salvarAgora();
         return render();

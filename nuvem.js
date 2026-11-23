@@ -200,6 +200,15 @@
 
   /** Manda uma obra: primeiro as fotos que faltam, depois o documento. */
   let temColunaFora = true;
+  /** o ponto como texto, com as chaves em ordem (o banco devolve as chaves em outra ordem) */
+  function assinaturaPonto(p) {
+    const canon = (v) => Array.isArray(v) ? v.map(canon) : v && typeof v === "object"
+      ? Object.fromEntries(Object.keys(v).sort().filter((k) => v[k] !== undefined).map((k) => [k, canon(v[k])])) : v;
+    return JSON.stringify(canon(p));
+  }
+  /** como cada ponto estava na última versão que este aparelho viu no banco */
+  const basePontos = (pontos) => Object.fromEntries((pontos || []).map((p) => [p.id, assinaturaPonto(p)]));
+
   async function enviarObra(obra, totais) {
     await enviarProjeto(obra.id);
     const fotosLocais = await enviarFotos(obra.id);
@@ -239,6 +248,7 @@
     const atual = await Banco.obterObra(obra.id);
     if (atual && atual.atualizada_em === enviadoEm) {
       atual.base_em = enviadoEm; // a versão do banco agora é esta
+      atual.base_pontos = basePontos(obra.pontos);
       atual.pendente = false;
       atual.enviada_em = new Date().toISOString();
       atual.fotos_info = infos;
@@ -249,6 +259,7 @@
 
   window.Nuvem = {
     configurada, ErroNuvem, lerSessao, entrar, sair, meuPerfil, catalogo, supervisores, alterarSupervisor, criarUsuario, trocarSenha, excluirUsuario,
+    assinaturaPonto, basePontos,
     listarObras, baixarObra, apagarObra, enviarObra, enviarFotos, baixarFoto, listarFotos, listarFotosInfo, versaoObra, enviarProjeto, baixarProjeto,
   };
 })();
