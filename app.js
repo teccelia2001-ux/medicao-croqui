@@ -3735,6 +3735,7 @@
         if (!p || soLeitura(o)) return;
         if (!confirm(`Excluir o ponto ${p.nome}? Os serviços dele saem da medição.${p.fotos.length ? ` As ${plural(p.fotos.length, "foto", "fotos")} continuam guardadas no celular e no banco.` : ""}`)) return;
         o.pontos = o.pontos.filter((x) => x.id !== p.id);
+        marcarFora(o, [p.id]); // excluído de propósito: não volta ao juntar com o banco
         estado.cqSel = null;
         salvarAgora();
         avisar(`Ponto ${p.nome} excluído.`);
