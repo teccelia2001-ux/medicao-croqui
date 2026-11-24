@@ -1223,6 +1223,7 @@
     visor = new Croqui.Visor();
     visor.onVazio = tocouVazio;
     visor.onMarca = tocouMarca;
+    visor.toqueNaHora = () => !!(estado.cqVaoNovo || estado.cqAjuste);
     return visor;
   }
   const arred = (v) => Math.round(v * 100000) / 100000;
@@ -1344,51 +1345,46 @@
     const dS = dist(em, simb);
     if (dS < 0.012) return true;
     try {
-      const { postes: perto } = await Croqui.postesPerto(proj, { pag, x: em.x, y: em.y }, Math.min(0.44, dS * 2.6 + 0.02), 1400);
+      const { postes: perto } = await Croqui.postesPerto(proj, { pag, x: em.x, y: em.y }, Math.min(0.44, dS * 2.6 + 0.02), 1400, true);
       const dMin = Math.min(...perto.map((q) => dist(em, q)));
       return !perto.length || dS <= dMin * 1.3 + 0.004;
     } catch (e) {
       return true;
     }
   }
-  /** Modo "marcar vão": cada toque é uma ponta (gruda no quadradinho do poste). Com as duas, o vão
-   *  nasce (ou é refeito) com a linha exata entre elas e abre para a metragem. */
+  /** Modo "marcar vão": cada toque é uma ponta, que fica na hora e exatamente onde tocou (só
+   *  centra no símbolo do poste quando o toque caiu em cima dele). Com as duas, o vão nasce com a
+   *  linha entre elas e abre para a metragem. Antes cada toque redesenhava o PDF para achar o
+   *  poste: levava segundos, e a ponta pulava para o símbolo vizinho. */
   async function marcarPontaDoVao(pos, posteId = null) {
     const vn = estado.cqVaoNovo, o = estado.obra;
     if (!vn || !o) return;
     if (vn.ocupado) { vn.proximo = [pos, posteId]; return; } // tocou de novo antes de acabar: vem logo depois
-    vn.ocupado = true;
-    let q = pos, simb = null, proj = null;
-    try {
-      proj = await garantirProjeto(o);
-      simb = proj && (await Croqui.acharPosteSimbolo(proj, pos, posteId ? 0.06 : 0.035));
-      q = simb || pos;
-    } catch (e) {
-      console.warn("poste perto do toque:", e);
+    // toque duplo (ou tremida) no mesmo lugar não vira o fim do vão
+    const antes = vn.pts[0];
+    if (antes && antes.pag === pos.pag && visor?.W && Math.hypot((antes.x - pos.x) * visor.W, (antes.y - pos.y) * visor.H) * visor.s < 14) {
+      if (Date.now() - antes.em > 600) avisar("Esse é o começo do vão. Toque no fim dele.", "guardado");
+      return;
     }
-    // o poste inicial não conta para o fim (o P5.1 perto "pegava" o toque no poste do P7)
-    const ini = vn.pts[0]?.id || null;
-    let poste = posteId && pontoPorId(posteId);
-    if (!poste) {
-      const cands = [];
+    if (posteId && antes?.id === posteId) return avisar("Esse é o poste inicial. Toque no poste final do vão.", "erro");
+    const simb = posteId ? null : visor?.simboloNoToque(pos), q = simb || pos;
+    const ponta = { pag: pos.pag, x: arred(q.x), y: arred(q.y), id: posteId, em: Date.now(), conferir: null };
+    if (!antes) visor?.alfinete(ponta); // aparece antes de qualquer conta
+    if (!posteId) {
+      vn.ocupado = true;
+      // o poste inicial não conta para o fim (o P5.1 perto "pegava" o toque no poste do P7)
+      const ini = antes?.id || null, cands = [];
       for (const c of [postePerto(o, { ...q, pag: pos.pag }, ini), postePerto(o, pos, ini)]) if (c) cands.push({ p: c, em: c.croqui });
-      cands.push(...(await posteExistente(o, pos, ini)));
-      for (const c of cands) {
-        // tocou num símbolo de poste: o ponto tem de ser dele (não do poste vizinho)
-        if (!simb || !proj || !c.em || (await ehDoPoste(proj, c.em, simb, pos.pag))) { poste = c.p; break; }
-      }
+      try { cands.push(...(await posteExistente(o, pos, ini))); } catch (e) { console.warn("poste do vão:", e); }
+      vn.ocupado = false;
+      if (estado.cqVaoNovo !== vn) return;
+      // sem ponto aqui: a ponta fica livre (fora do poste), sem criar ponto
+      ponta.id = cands[0]?.p.id || null;
+      if (ponta.id && simb?.vazado) ponta.conferir = cands.map((x) => ({ id: x.p.id, em: { x: x.em.x, y: x.em.y } }));
+      else avisar("Ponta fora do poste marcada (sem criar ponto).", "guardado");
     }
-    vn.ocupado = false;
-    if (estado.cqVaoNovo !== vn) return;
-    // sem ponto aqui: a ponta fica livre (fora do poste), sem criar ponto
-    if (poste && vn.pts[0]?.id === poste.id) {
-      avisar("Esse é o poste inicial. Toque no poste final do vão.", "erro");
-      return render();
-    }
-    vn.pts.push({ pag: pos.pag, x: arred(q.x), y: arred(q.y), id: poste?.id || null });
-    if (!poste) avisar("Ponta fora do poste marcada (sem criar ponto).", "guardado");
+    vn.pts.push(ponta);
     if (vn.pts.length < 2) {
-      salvarAgora();
       render();
       if (vn.proximo) { const [p2, id2] = vn.proximo; vn.proximo = null; return marcarPontaDoVao(p2, id2); }
       return;
@@ -1405,25 +1401,44 @@
     v.croqui = { pag: a.pag, x: arred((a.x + b.x) / 2), y: arred((a.y + b.y) / 2) };
     salvarAgora();
     avisar(ja ? `${v.nome} marcado (é outro vão: o ${ja.nome} que já existia não mudou).` : `${v.nome} marcado.`, ja ? "guardado" : "ok");
+    conferirPostesDoVao(o, v.id, [a, b]);
     return abrirPonto(v.id);
   }
-  /** toque no modo "Ajustar linha": gruda no quadradinho do poste mais perto do toque */
-  async function ajustarVao(aj, pos) {
-    if (aj.ocupado) return;
-    aj.ocupado = true;
-    let q = pos;
-    try {
-      const proj = await garantirProjeto(estado.obra);
-      q = (proj && (await Croqui.acharPosteSimbolo(proj, pos, 0.035))) || pos;
-    } catch (e) {
-      console.warn("poste perto do toque:", e);
-    }
-    aj.ocupado = false;
-    if (estado.cqAjuste !== aj) return;
+  /** Poste existente (caixinha vazada) pode não ter (P): confere, por trás, se o ponto achado é
+   *  mesmo dele e não do poste vizinho. Muda só o nome da ponta, nunca a linha, e não mexe na ponta
+   *  que o supervisor já trocou. O poste novo (quadrado cheio) tem sempre o seu (P): não precisa. */
+  let filaVaos = Promise.resolve();
+  function conferirPostesDoVao(o, vid, pontas) {
+    filaVaos = filaVaos.then(async () => {
+      for (const [i, pt] of pontas.entries()) {
+        if (!pt.conferir) continue;
+        const lado = i ? "para" : "de", outro = i ? "de" : "para";
+        const proj = await garantirProjeto(o);
+        if (!proj) return;
+        let certo = null;
+        for (const c of pt.conferir) {
+          if (await ehDoPoste(proj, c.em, pt, pt.pag)) { certo = c.id; break; }
+        }
+        const v = estado.obra?.id === o.id ? pontoPorId(vid) : null;
+        if (!v?.vao) return; // saiu da obra ou excluiu o vão
+        if (v.vao[lado] !== pt.id || v.vao[lado + "Nome"] || certo === pt.id || (certo && certo === v.vao[outro])) continue;
+        const eraNome = v.nome === nomeDoVao(v);
+        v.vao[lado] = certo;
+        if (eraNome) v.nome = nomeDoVao(v);
+        salvarAgora();
+        if (!digitando() && !estado.escolhido && !estado.cqVaoNovo && !comCamera()) render();
+      }
+    }).catch((e) => console.warn("postes do vão:", e));
+  }
+  /** toque no modo "Ajustar linha": a ponta fica onde tocou (no meio do símbolo, se tocou nele) */
+  function ajustarVao(aj, pos, exato = false) {
+    const antes = aj.pts[0];
+    if (antes && visor?.W && Math.hypot((antes[0] - pos.x) * visor.W, (antes[1] - pos.y) * visor.H) * visor.s < 14) return; // toque duplo
+    const q = exato ? pos : visor?.simboloNoToque(pos) || pos;
     aj.pts.push([arred(q.x), arred(q.y)]);
     aj.pag = pos.pag;
     const v = pontoPorId(aj.id);
-    if (aj.pts.length < 2 || !v) return render();
+    if (aj.pts.length < 2 || !v) { visor?.alfinete({ x: q.x, y: q.y }); return render(); }
     v.vao.linha = aj.pts;
     // poste extra (ou fora do croqui): fica onde o supervisor tocou
     [v.vao.de, v.vao.para].forEach((id, i) => {
@@ -1437,7 +1452,7 @@
     avisar("Linha do vão ajustada.");
     render();
   }
-  /** mudou o começo ou o fim do vão: novo nome, e a linha é refeita (de poste a poste) */
+  /** mudou o começo ou o fim do vão: novo nome; a linha marcada não sai do lugar */
   function trocarPostesDoVao(v, campo) {
     const o = estado.obra;
     const nome = campo.value.trim().toUpperCase().slice(0, 30);
@@ -1464,11 +1479,9 @@
     Object.assign(v.vao, { de, para, linha: null });
     v.nome = nomeDoVao(v);
     const a = pontoPorId(de)?.croqui, b = pontoPorId(para)?.croqui;
-    if ((!de || !para) && antes) {
-      // a outra ponta é livre: ela fica onde estava, e esta vai para o poste escolhido
-      const i = lado === "de" ? 0 : 1, c = pontoPorId(q.id)?.croqui;
-      v.vao.linha = antes.map((pt, k) => (k === i && c ? [c.x, c.y] : pt));
-      delete v.vao[lado + "Nome"];
+    delete v.vao[lado + "Nome"];
+    if (antes) { // a linha marcada fica onde foi tocada: o (P) do poste pode estar longe dele
+      v.vao.linha = antes;
       salvarAgora();
       return render();
     }
@@ -1830,7 +1843,7 @@
     const pag = Math.min(estado.cqPag, pags);
     const aj = estado.cqAjuste, vAj = aj && pontoPorId(aj.id), vn = estado.cqVaoNovo;
     const dica = vn ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no ${vn.pts.length ? `<b>fim</b> do vão (de ${esc(vn.pts[0].id ? nomeDoPoste(vn.pts[0].id) : "ponta livre")})` : "<b>início</b> do vão"}: no poste ou, fora dele, onde a linha vai</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
-      : vAj ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste ${aj.pts.length ? `de fim (<b>${esc(pontaDoVao(vAj, "para"))}</b>)` : `de início (<b>${esc(pontaDoVao(vAj, "de"))}</b>)`}, no quadradinho preto</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
+      : vAj ? `<div class="cq-dica cq-dica-mover"><span>📏 Toque no poste ${aj.pts.length ? `de fim (<b>${esc(pontaDoVao(vAj, "para"))}</b>)` : `de início (<b>${esc(pontaDoVao(vAj, "de"))}</b>)`}, na bolinha ou no lugar exato</span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : estado.cqDesenho ? `<div class="cq-dica cq-dica-rascunho"><span>✏️ Rascunho: desenhe com um dedo · dois dedos movem</span><button type="button" class="link" data-acao="cq-desfazer">↶ Desfazer</button><button type="button" class="link" data-acao="cq-rascunho">Pronto</button></div>`
       : estado.cqMoverNota ? `<div class="cq-dica cq-dica-mover"><span>📝 Toque no croqui onde fica a <b>anotação</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
       : estado.cqNovo || sel || estado.cqNota ? "" : mover ? `<div class="cq-dica cq-dica-mover"><span>📌 Toque no croqui onde fica o <b>${esc(mover.nome)}</b></span><button type="button" class="link" data-acao="cq-cancelar">Cancelar</button></div>`
@@ -2131,7 +2144,7 @@
     return `<small class="sub cq-lido" id="cq-lido">${t}</small>`;
   }
 
-  function tocouMarca(id) {
+  function tocouMarca(id, toque = {}) {
     if (estado.tela !== "croqui") return;
     // anotação (ex.: poste novo desenhado no rascunho): ao mudar o lugar de um ponto ou marcar um
     // vão, tocar nela vale como tocar no lugar dela
@@ -2139,11 +2152,16 @@
     if (nota && (estado.cqMover || estado.cqVaoNovo)) return tocouVazio({ x: nota.x, y: nota.y });
     if (estado.cqMoverNota) { const q = nota || pontoPorId(id)?.croqui; return q ? tocouVazio({ x: q.x, y: q.y }) : undefined; }
     if (estado.cqMover) return avisar("Toque num lugar vazio do croqui.", "guardado");
-    if (estado.cqAjuste) return avisar("Toque no quadradinho preto do poste, fora dos nomes.", "guardado");
-    if (estado.cqVaoNovo) { // tocou na marca de um ponto: é esse poste
+    if (estado.cqVaoNovo || estado.cqAjuste) {
+      // na bolinha ou no nome de um ponto: é esse poste, no lugar da bolinha. Ao lado dela, ou em
+      // cima da etiqueta de outro vão: vale o lugar exato do toque
       const q = pontoPorId(id);
-      if (q && !q.vao && q.croqui) return marcarPontaDoVao({ pag: q.croqui.pag || 1, x: q.croqui.x, y: q.croqui.y }, q.id);
-      if (q?.croqui) return marcarPontaDoVao({ pag: q.croqui.pag || 1, x: q.croqui.x, y: q.croqui.y });
+      const naMarca = toque.noNome || !toque.pos || toque.dist <= 14;
+      if (q && !q.vao && q.croqui && naMarca) {
+        const lugar = { pag: q.croqui.pag || 1, x: q.croqui.x, y: q.croqui.y };
+        return estado.cqAjuste ? ajustarVao(estado.cqAjuste, lugar, true) : marcarPontaDoVao(lugar, q.id);
+      }
+      if (toque.pos) return tocouVazio(toque.pos);
       return avisar("Toque num poste ou num lugar vazio.", "guardado");
     }
     estado.cqNovo = null;

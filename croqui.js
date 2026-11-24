@@ -324,7 +324,8 @@
       this.pos = null; // alfinete {x, y}
       this.cw = 0; this.ch = 0;
       this.onVazio = null; // (pos {x, y}) => {}
-      this.onMarca = null; // (id) => {}
+      this.onMarca = null; // (id, { pos, dist, noNome }) => {}: lugar do toque, px até a bolinha, se foi no nome
+      this.toqueNaHora = null; // () => true: sem esperar o toque duplo (marcando vão)
       this._ligarGestos();
       new ResizeObserver(() => this._redimensionou()).observe(el);
     }
@@ -787,7 +788,7 @@
           this._vivo.setAttribute("vector-effect", "non-scaling-stroke");
           this.camadaEl.appendChild(this._vivo);
         } else if (dedos.size === 1) {
-          toque = { ...p, t: Date.now(), alvo: e.target.closest(".cq-marca") };
+          toque = { ...p, t: Date.now(), alvo: e.target.closest(".cq-marca"), noNome: !!e.target.closest(".cq-marca span") };
           gesto = comecarArrasto(p);
         } else if (dedos.size === 2) {
           toque = null;
@@ -862,7 +863,15 @@
       if (t.alvo) {
         clearTimeout(this._tempoToque);
         this._ultimo = null;
-        this.onMarca?.(t.alvo.dataset.id);
+        const dist = Math.hypot(p.x - this.tx - Number(t.alvo.dataset.x) * this.W * this.s, p.y - this.ty - Number(t.alvo.dataset.y) * this.H * this.s);
+        this.onMarca?.(t.alvo.dataset.id, { pos: this.paraFolha(p.x, p.y), dist, noNome: t.noNome });
+        return;
+      }
+      if (this.toqueNaHora?.()) {
+        clearTimeout(this._tempoToque);
+        this._ultimo = null;
+        const lugar = this.paraFolha(p.x, p.y);
+        if (lugar) this.onVazio?.(lugar);
         return;
       }
       const agora = Date.now();
@@ -881,6 +890,37 @@
         this._ultimo = null;
         if (pos) this.onVazio?.(pos);
       }, 300);
+    }
+    /** O símbolo de poste embaixo do dedo, pelo que já está desenhado na tela (na hora, sem
+     *  desenhar o PDF de novo). Só se o toque caiu nele (até 8 px da borda e 24 px do meio):
+     *  fora dele a ponta do vão fica exatamente onde tocou. Fração da folha, ou null. */
+    simboloNoToque(pos) {
+      if (!pos || !this.W) return null;
+      const [u, v] = paraGirada(pos.x, pos.y, this.giro);
+      const dt = this.det && !this.detalhe.hidden && this.det.s === this.s && this.det.tx === this.tx && this.det.ty === this.ty;
+      const cv = dt ? this.detalhe : this.base;
+      const k = dt ? cv.width / this.cw : this.sb / this.s; // px da tela -> px da imagem
+      const px = dt ? (this.tx + u * this.W * this.s) * k : u * cv.width;
+      const py = dt ? (this.ty + v * this.H * this.s) * k : v * cv.height;
+      const R = 48 * k, x0 = Math.max(0, Math.round(px - R)), y0 = Math.max(0, Math.round(py - R));
+      const w = Math.min(cv.width, Math.round(px + R)) - x0, h = Math.min(cv.height, Math.round(py + R)) - y0;
+      if (w < 8 || h < 8 || w > 1200 || h > 1200) return null;
+      let melhor = null;
+      try {
+        const d = cv.getContext("2d").getImageData(x0, y0, w, h).data;
+        for (const q of simbolosNaImagem(d, w, h, this.s * k)) {
+          if (q.x0 <= 0 || q.y0 <= 0 || q.x1 >= w - 1 || q.y1 >= h - 1) continue; // cortado pela borda
+          const fx = Math.max(q.x0 - (px - x0), 0, (px - x0) - q.x1), fy = Math.max(q.y0 - (py - y0), 0, (py - y0) - q.y1);
+          const dm = Math.hypot(q.cx - (px - x0), q.cy - (py - y0)) / k;
+          if (Math.hypot(fx, fy) / k > 8 || dm > 24) continue;
+          if (!melhor || dm < melhor.dm) melhor = { dm, vazado: q.vazado, u: (x0 + q.cx - px) / k / this.s / this.W, v: (y0 + q.cy - py) / k / this.s / this.H };
+        }
+      } catch (e) {
+        return null;
+      }
+      if (!melhor) return null;
+      const [x, y] = daGirada(u + melhor.u, v + melhor.v, this.giro);
+      return { x, y, vazado: melhor.vazado };
     }
     _relativo(t) {
       const r = this.el.getBoundingClientRect();
@@ -984,7 +1024,7 @@
    *  e `proporcao` largura/altura do pedaço. `marcas`: [{ tipo: "ponto"|"vao"|"nota", nome,
    *  x, y, cor, destaque }]; `linhas`: vãos [{ x1, y1, x2, y2, solta, cor }]; `tracos`:
    *  rascunho [[[x, y]...]] (tudo em fração da folha). */
-  async function imagem(proj, { pag = 1, marcas = [], linhas = [], tracos = [], recorte = null, px = 2400, canvas = false, giro = 0 } = {}) {
+  async function imagem(proj, { pag = 1, marcas = [], linhas = [], tracos = [], recorte = null, px = 2400, canvas = false, giro = 0, calma = false } = {}) {
     const doc = await abrir(proj);
     giro = giroValido(giro);
     marcas = marcas.map((m) => ({ ...m, tipo: m.tipo || "ponto" }));
@@ -1013,7 +1053,8 @@
     cv.width = w;
     cv.height = h;
     const ctx = cv.getContext("2d");
-    await f.desenhar(ctx, escala, dx, dy, true).promise;
+    // `calma`: desenha aos poucos, sem travar a tela (demora mais; para o que roda por trás)
+    await f.desenhar(ctx, escala, dx, dy, !calma).promise;
     const X = (x) => x * f.W * escala - dx, Y = (y) => y * f.H * escala - dy;
     const r = Math.max(6, Math.round(Math.max(w, h) / (recorte ? 100 : 130)));
     const k = r / 11;
@@ -1158,19 +1199,30 @@
   /** Símbolos de poste em volta de `pos` ({ pag, x, y }, fração da folha): os quadradinhos
    *  pretos cheios (no meio do círculo vermelho). Recorte de `largura` (fração da largura da
    *  folha). Devolve [{ x, y }] em fração da folha e `k` = altura/largura da folha. */
-  async function postesPerto(proj, pos, largura = 0.44, px = 2000) {
+  async function postesPerto(proj, pos, largura = 0.44, px = 2000, calma = false) {
+    if (calma) await esperarTela();
     const pag = pos.pag || 1;
     const doc = await abrir(proj);
     const f = await folha(doc, Math.min(Math.max(1, pag), doc.paginas));
-    const { cv, w, h } = await imagem(proj, { pag, px, canvas: true, recorte: { x: pos.x, y: pos.y, largura, proporcao: 1 } });
+    const { cv, w, h } = await imagem(proj, { pag, px, canvas: true, calma, recorte: { x: pos.x, y: pos.y, largura, proporcao: 1 } });
     const d = cv.getContext("2d").getImageData(0, 0, w, h).data;
     cv.width = cv.height = 0;
+    const escala = w / (largura * f.W); // px do recorte por ponto da folha
+    const achados = simbolosNaImagem(d, w, h, escala).map((q) => ({
+      x: Math.round((pos.x + (q.cx - w / 2) / escala / f.W) * 1e5) / 1e5,
+      y: Math.round((pos.y + (q.cy - h / 2) / escala / f.H) * 1e5) / 1e5,
+      ...(q.vazado ? { vazado: true } : {}),
+    }));
+    return { postes: achados, k: f.H / f.W };
+  }
+  /** símbolos de poste numa imagem (pixels `d`, `escala` px por ponto da folha): [{ cx, cy,
+   *  x0, y0, x1, y1, vazado }] em px da imagem */
+  function simbolosNaImagem(d, w, h, escala) {
     const N = w * h, preto = new Uint8Array(N);
     for (let k = 0, i = 0; k < N; k++, i += 4) {
       const mx = Math.max(d[i], d[i + 1], d[i + 2]);
       if (mx < 110 && mx - Math.min(d[i], d[i + 1], d[i + 2]) < 50) preto[k] = 1;
     }
-    const escala = w / (largura * f.W); // px do recorte por ponto da folha
     const visto = new Uint8Array(N), pilha = [], achados = [];
     for (let s0 = 0; s0 < N; s0++) {
       if (!preto[s0] || visto[s0]) continue;
@@ -1217,14 +1269,9 @@
         }
         if (total && verde / total > 0.2) continue;
       }
-      const cx = (x0 + x1 + 1) / 2, cy = (y0 + y1 + 1) / 2;
-      achados.push({
-        x: Math.round((pos.x + (cx - w / 2) / escala / f.W) * 1e5) / 1e5,
-        y: Math.round((pos.y + (cy - h / 2) / escala / f.H) * 1e5) / 1e5,
-        ...(vazado ? { vazado: true } : {}),
-      });
+      achados.push({ cx: (x0 + x1 + 1) / 2, cy: (y0 + y1 + 1) / 2, x0, y0, x1, y1, vazado });
     }
-    return { postes: achados, k: f.H / f.W };
+    return achados;
   }
   /** o símbolo de poste mais perto de `pos` (para o toque "grudar" no poste), ou null */
   async function acharPosteSimbolo(proj, pos, largura = 0.06) {
