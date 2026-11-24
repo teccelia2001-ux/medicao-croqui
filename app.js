@@ -1993,8 +1993,8 @@
       const [a, b] = v.vao.linha ? v.vao.linha.map(([x, y]) => ({ x, y })) : [ra, rb];
       const x = arred((a.x + b.x) / 2), y = arred((a.y + b.y) / 2);
       if (!v.croqui || v.croqui.x !== x || v.croqui.y !== y || (v.croqui.pag || 1) !== pag) v.croqui = { pag, x, y };
-      linhas.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, classe: `cq-vao-linha${v.id === estado.cqSel || v.id === estado.cqAjuste?.id ? " cq-vao-sel" : ""}${v.vao.linha ? "" : " cq-vao-solta"}` });
-      lista.push({ id: v.id, nome: medidasVao(v) || "vão", x, y, classe: ["cq-vao", v.itens.length ? "cq-com" : "", v.id === estado.cqSel ? "cq-sel" : ""].join(" ") });
+      linhas.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, classe: `cq-vao-linha${medidasVao(v) ? "" : " cq-vao-linha-sm"}${v.id === estado.cqSel || v.id === estado.cqAjuste?.id ? " cq-vao-sel" : ""}${v.vao.linha ? "" : " cq-vao-solta"}` });
+      lista.push({ id: v.id, nome: medidasVao(v) || "vão", x, y, classe: ["cq-vao", medidasVao(v) ? "" : "cq-vao-sm", v.itens.length ? "cq-com" : "", v.id === estado.cqSel ? "cq-sel" : ""].join(" ") });
     }
     // anotações do campo, em azul
     const an = o.anotacoes || {};
@@ -2827,7 +2827,7 @@
           vaos: o.pontos.filter((v) => v.vao && naFolha(v.croqui, pag)).map((v) => {
             const ra = pontoPorId(v.vao.de)?.croqui, rb = pontoPorId(v.vao.para)?.croqui;
             const linha = v.vao.linha || (ra && rb ? [[ra.x, ra.y], [rb.x, rb.y]] : null);
-            return { x: v.croqui.x, y: v.croqui.y, linha, texto: `${pontaDoVao(v, "de")}–${pontaDoVao(v, "para")}${medidasVao(v) ? " · " + medidasVao(v) : ""}` };
+            return { x: v.croqui.x, y: v.croqui.y, linha, texto: `${pontaDoVao(v, "de")}–${pontaDoVao(v, "para")}${medidasVao(v) ? " · " + medidasVao(v) : ""}`, cor: medidasVao(v) ? null : Croqui.COR_VAO_SM };
           }),
           tracos: (an.tracos || []).filter((t) => t.pag === pag).map((t) => t.pts),
           notas: (an.notas || []).filter((n) => n.pag === pag).map((n) => ({ x: n.x, y: n.y, texto: n.texto })),

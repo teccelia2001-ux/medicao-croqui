@@ -536,6 +536,12 @@
       doc.setFillColor(29, 78, 216);
       doc.circle(lx + 30, ly, 1.1, "F");
       doc.text("anotação do campo", lx + 33, topoImg + ih + 4);
+      // marrom: vão sem a metragem
+      doc.setDrawColor(120, 53, 15);
+      doc.setLineDashPattern([0.9, 0.6], 0);
+      doc.line(lx + 60, ly, lx + 65, ly);
+      doc.setLineDashPattern([], 0);
+      doc.text("vão sem metragem", lx + 66.5, topoImg + ih + 4);
       doc.setLineWidth(0.2);
     }
 

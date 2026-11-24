@@ -1256,7 +1256,7 @@
       ctx.globalAlpha = l.solta ? 0.6 : 0.85;
       ctx.setLineDash(l.solta ? [3 * k, 6 * k] : [7 * k, 5 * k]);
       ctx.lineWidth = (l.cor ? 4 : 3) * k;
-      ctx.strokeStyle = l.cor || "#7c3aed";
+      ctx.strokeStyle = l.cor || (l.semMetros ? COR_VAO_SM : COR_VAO);
       ctx.stroke();
     }
     ctx.restore();
@@ -1311,6 +1311,7 @@
   const COR_DESTAQUE = "#e11414";
   const COR_VAO = "#7c3aed"; // vão (como na tela)
   const COR_VAO_COM = "#6d28d9";
+  const COR_VAO_SM = "#78350f"; // vão sem a metragem: marrom
   const COR_NOTA = "#1d4ed8"; // anotação do campo
   const PROPORCAO_RECORTE = 190 / 58; // faixa do croqui na folha de cada ponto do PDF
 
@@ -1340,8 +1341,8 @@
         const ra = porId.get(v.vao.de)?.croqui, rb = porId.get(v.vao.para)?.croqui;
         if (v.vao.linha ? (v.croqui?.pag || 1) !== pag : !ra || !rb || (ra.pag || 1) !== pag || (rb.pag || 1) !== pag) continue;
         const [a, b] = v.vao.linha ? v.vao.linha.map(([x, y]) => ({ x, y })) : [ra, rb];
-        linhas.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, solta: !v.vao.linha, cor: sel(v) ? COR_DESTAQUE : null });
-        marcas.push({ tipo: "vao", nome: v.vao.metros ? `${v.vao.metros} m` : "vão", x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, cor: sel(v) ? COR_DESTAQUE : v.itens.length ? COR_VAO_COM : COR_VAO, destaque: sel(v) });
+        linhas.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, solta: !v.vao.linha, cor: sel(v) ? COR_DESTAQUE : null, semMetros: !v.vao.metros });
+        marcas.push({ tipo: "vao", nome: v.vao.metros ? `${v.vao.metros} m` : "vão", x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, cor: sel(v) ? COR_DESTAQUE : !v.vao.metros ? COR_VAO_SM : v.itens.length ? COR_VAO_COM : COR_VAO, destaque: sel(v) });
       }
       const an = fonte.anotacoes || {};
       for (const n of an.notas || []) {
@@ -1602,7 +1603,7 @@
       for (const v of fl.vaos || []) {
         if (!v.linha) continue;
         const [[ax, ay], [bx, by]] = v.linha;
-        for (const [cor, l] of [["#fff", r * 0.45 + 3], ["#7c3aed", r * 0.45]]) {
+        for (const [cor, l] of [["#fff", r * 0.45 + 3], [v.cor || COR_VAO, r * 0.45]]) {
           ctx.strokeStyle = cor;
           ctx.lineWidth = l;
           ctx.beginPath();
@@ -1619,12 +1620,12 @@
       for (const v of fl.vaos || []) {
         const tw = ctx.measureText(v.texto).width + r * 1.2, th = r * 2.1, x = v.x * w, y = v.y * h;
         ctx.fillStyle = "#fff";
-        ctx.strokeStyle = "#7c3aed";
+        ctx.strokeStyle = v.cor || COR_VAO;
         ctx.lineWidth = Math.max(2, r * 0.18);
         caixa(ctx, x - tw / 2, y - th / 2, tw, th, th / 2);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = "#6d28d9";
+        ctx.fillStyle = v.cor || COR_VAO_COM;
         ctx.fillText(v.texto, x, y);
         ocupados.push({ x0: x - tw / 2, y0: y - th / 2, x1: x + tw / 2, y1: y + th / 2 });
       }
@@ -2604,5 +2605,5 @@
     return Promise.all([prepararLeitura(1), prepararLeitura(2), inclinacaoDaFolha(proj, pag)]);
   }
 
-  window.Croqui = { lerFaixa, Visor, imagem, paginas, paraPdf, croquiAnotado, acharPosteSimbolo, postesPerto, linhaDoVao, AZUL, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM };
+  window.Croqui = { lerFaixa, Visor, imagem, paginas, paraPdf, croquiAnotado, acharPosteSimbolo, postesPerto, linhaDoVao, AZUL, prepararLeitura, prepararProjeto, acharPontos, corrigirNumeros, juntarCroquis, lerPoste, lerProjeto, COR_COM, COR_SEM, COR_VAO_SM };
 })();
