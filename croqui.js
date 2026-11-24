@@ -78,6 +78,142 @@
    *  (x*escala - dx, y*escala - dy). Devolve { promise, cancelar }.
    *  `semTela`: para o PDF da medição. O desenho da tela anda no ritmo da tela (pára se o
    *  supervisor troca de app); o do arquivo não depende dela. */
+  // ------------------------------------------------------------------ só o que aparece
+  /* O projeto tem mais de 200 mil traços, e o pdf.js passa por todos mesmo para desenhar um
+     pedacinho (no celular, 2 a 4 s para o zoom focar). Aqui a folha aberta é separada uma vez em
+     blocos (save … um desenho … restore) com o retângulo que cada um ocupa; para desenhar um
+     pedaço, os blocos fora dele ficam de fora. Só entram blocos fechados e simples: texto, imagem,
+     recorte e grupo são sempre desenhados. Sem acesso às partes internas do pdf.js (versão fixa no
+     index.html), tudo segue do jeito normal. */
+  const internoDe = (page, tarefa) => {
+    for (const st of page._intentStates?.values?.() || []) {
+      for (const t of st.renderTasks || []) if (t.task === tarefa) return { st, t };
+    }
+    return null;
+  };
+  async function separarBlocos(lista, matriz) {
+    const O = window.pdfjsLib.OPS, fn = lista.fnArray, args = lista.argsArray, total = fn.length;
+    const pinta = new Set([O.stroke, O.closeStroke, O.fill, O.eoFill, O.fillStroke, O.eoFillStroke, O.closeFillStroke, O.closeEOFillStroke]);
+    const livre = new Set([O.setLineWidth, O.setLineCap, O.setLineJoin, O.setMiterLimit, O.setDash, O.setRenderingIntent, O.setFlatness,
+      O.setStrokeColorSpace, O.setFillColorSpace, O.setStrokeColor, O.setStrokeColorN, O.setFillColor, O.setFillColorN, O.setStrokeGray, O.setFillGray,
+      O.setStrokeRGBColor, O.setFillRGBColor, O.setStrokeCMYKColor, O.setFillCMYKColor, O.transform, O.constructPath, ...pinta]);
+    const mult = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+      m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+    const ini = [], fim = [], caixas = [];
+    let m = matriz, lw = 1; // matriz e espessura do traço neste ponto da lista
+    const pilha = [];
+    let grupo = 0; // dentro de grupo, forma ou anotação: nada é separado
+    let b = null; // bloco sendo lido { i, x0, y0, x1, y1, desenho, pendente, ok }
+    let t0 = performance.now();
+    for (let i = 0; i < total; i++) {
+      if ((i & 2047) === 0 && performance.now() - t0 > 10) { await new Promise((r) => setTimeout(r, 0)); t0 = performance.now(); }
+      const op = fn[i], a = args[i];
+      if (op === O.save) {
+        pilha.push(m, lw);
+        b = grupo ? null : { i, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity, desenho: false, pendente: false, cam: 0 };
+        continue;
+      }
+      if (op === O.restore) {
+        if (pilha.length) { lw = pilha.pop(); m = pilha.pop(); }
+        if (b && b.desenho && !b.pendente) {
+          ini.push(b.i);
+          fim.push(i);
+          caixas.push(b.x0, b.y0, b.x1, b.y1);
+        }
+        b = null;
+        continue;
+      }
+      if (op === O.transform) m = mult(m, a);
+      else if (op === O.setLineWidth) lw = Math.abs(a[0]) || 0;
+      else if (op === O.beginGroup || op === O.paintFormXObjectBegin || op === O.beginAnnotation) grupo++;
+      else if (op === O.endGroup || op === O.paintFormXObjectEnd || op === O.endAnnotation) grupo = Math.max(0, grupo - 1);
+      if (!b) continue;
+      if (!livre.has(op)) { b = null; continue; }
+      if (op === O.constructPath) {
+        if (b.pendente) { b = null; continue; }
+        const [ops, v] = a;
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, j = 0;
+        const ponto = (x, y) => {
+          const X = m[0] * x + m[2] * y + m[4], Y = m[1] * x + m[3] * y + m[5];
+          if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y;
+        };
+        let certo = true;
+        for (const p of ops) {
+          let pares = 0;
+          if (p === O.moveTo || p === O.lineTo) pares = 1;
+          else if (p === O.curveTo) pares = 3;
+          else if (p === O.curveTo2 || p === O.curveTo3) pares = 2;
+          else if (p === O.rectangle) {
+            const x = v[j], y = v[j + 1], w = v[j + 2], h = v[j + 3];
+            j += 4;
+            ponto(x, y); ponto(x + w, y); ponto(x, y + h); ponto(x + w, y + h);
+            continue;
+          } else if (p !== O.closePath) { certo = false; break; }
+          for (; pares > 0; pares--, j += 2) ponto(v[j], v[j + 1]);
+        }
+        if (!certo || !Number.isFinite(x0 + y0 + x1 + y1)) { b = null; continue; }
+        b.pendente = true;
+        if (x0 < b.x0) b.x0 = x0; if (y0 < b.y0) b.y0 = y0; if (x1 > b.x1) b.x1 = x1; if (y1 > b.y1) b.y1 = y1;
+      } else if (pinta.has(op)) {
+        if (!b.pendente) { b = null; continue; }
+        b.pendente = false;
+        b.desenho = true;
+        // folga do traço (com a ponta da quina) e do traço mínimo de 1 px
+        const folga = lw * Math.max(Math.hypot(m[0], m[1]), Math.hypot(m[2], m[3])) * 5 + 1;
+        if (folga > b.cam) { b.x0 -= folga - b.cam; b.y0 -= folga - b.cam; b.x1 += folga - b.cam; b.y1 += folga - b.cam; b.cam = folga; }
+      }
+    }
+    return { lista, ini: Int32Array.from(ini), fim: Int32Array.from(fim), caixas: Float32Array.from(caixas) };
+  }
+  /** a lista de desenho só com o que cai no retângulo (pontos da folha), na mesma ordem */
+  function listaDoPedaco(bl, x0, y0, x1, y1) {
+    const { lista, ini, fim, caixas } = bl, fn = lista.fnArray, args = lista.argsArray;
+    const fnArray = [], argsArray = [];
+    let de = 0;
+    const copiar = (ate) => { for (; de < ate; de++) { fnArray.push(fn[de]); argsArray.push(args[de]); } };
+    for (let k = 0, c = 0; k < ini.length; k++, c += 4) {
+      if (caixas[c] <= x1 && caixas[c + 2] >= x0 && caixas[c + 1] <= y1 && caixas[c + 3] >= y0) continue;
+      copiar(ini[k]);
+      de = fim[k] + 1;
+    }
+    copiar(fn.length);
+    return { fnArray, argsArray, lastChunk: true, separateAnnots: lista.separateAnnots };
+  }
+  /** Deixa a folha que está na tela lida e separada em blocos (por trás, sem desenhar nada). */
+  function prepararFolha(f) {
+    if (!f?.page || !f.naTela || f.blocos) return Promise.resolve();
+    if (f.preparando) return f.preparando;
+    f.preparando = (async () => {
+      try {
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = 1;
+        const tarefa = f.page.render({ canvasContext: cv.getContext("2d"), viewport: f.page.getViewport({ scale: 1 }), intent: "display" });
+        const i = internoDe(f.page, tarefa);
+        if (!i) { tarefa.promise.catch(() => {}); tarefa.cancel(); return; }
+        // pede a leitura do PDF, mas não desenha: a lista desta tarefa é vazia
+        i.t.operatorList = { fnArray: [], argsArray: [], lastChunk: true, separateAnnots: null };
+        i.t._useRequestAnimationFrame = false;
+        await tarefa.promise;
+        for (let n = 0; n < 600 && !i.st.operatorList?.lastChunk; n++) await new Promise((r) => setTimeout(r, 60));
+        const lista = i.st.operatorList;
+        if (!lista?.lastChunk || !f.naTela) return;
+        if (f.blocos?.lista !== lista) f.blocos = await separarBlocos(lista, f.page.getViewport({ scale: 1 }).transform);
+      } catch (e) {
+        console.warn("folha em blocos:", e);
+      } finally {
+        f.preparando = null;
+      }
+    })();
+    return f.preparando;
+  }
+  /** saiu da tela: solta a memória da folha */
+  function soltarFolha(f) {
+    if (!f?.page) return;
+    f.naTela = false;
+    f.blocos = null;
+    setTimeout(() => { if (!f.naTela) { try { f.page.cleanup(); } catch (e) { /* ainda em uso */ } } }, 3000);
+  }
+
   async function folha(doc, n) {
     if (doc.folhas.has(n)) return doc.folhas.get(n);
     let f;
@@ -85,8 +221,9 @@
       const page = await doc.pdf.getPage(n);
       const vp = page.getViewport({ scale: 1 });
       f = {
-        W: vp.width, H: vp.height,
+        W: vp.width, H: vp.height, page, naTela: false, blocos: null, preparando: null,
         desenhar(ctx, escala, dx, dy, semTela = false) {
+          const cv = ctx.canvas, ct = ctx.getTransform();
           ctx.save();
           ctx.fillStyle = "#fff";
           ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -95,8 +232,28 @@
             canvasContext: ctx,
             viewport: page.getViewport({ scale: escala }),
             transform: [1, 0, 0, 1, -dx, -dy],
-            intent: semTela ? "print" : "display",
+            // a folha da tela usa sempre a mesma leitura: o "print" do pdf.js, ao acabar, apaga tudo o
+            // que estava lido, e o zoom seguinte tinha de ler o PDF de novo. As outras folhas seguem
+            // com ele (apagar é o que se quer: 11 folhas lidas não cabem no celular)
+            intent: semTela && !f.naTela ? "print" : "display",
           });
+          if (f.naTela) {
+            try {
+              const i = internoDe(page, tarefa);
+              if (i && semTela) i.t._useRequestAnimationFrame = false; // sem esperar a tela
+              if (f.blocos && f.blocos.lista !== i?.st.operatorList) f.blocos = null; // o pdf.js soltou o que estava lido
+              if (i && f.blocos) {
+                // o pedaço da folha que cai no canvas
+                const inv = ct.translate(-dx, -dy).scale(escala).inverse();
+                const q = [[0, 0], [cv.width, 0], [0, cv.height], [cv.width, cv.height]].map(([x, y]) => inv.transformPoint({ x, y }));
+                const xs = q.map((p) => p.x), ys = q.map((p) => p.y), m = 2 / escala;
+                const x0 = Math.min(...xs) - m, x1 = Math.max(...xs) + m, y0 = Math.min(...ys) - m, y1 = Math.max(...ys) + m;
+                if ((Math.min(x1, f.W) - Math.max(x0, 0)) * (Math.min(y1, f.H) - Math.max(y0, 0)) < f.W * f.H * 0.8) i.t.operatorList = listaDoPedaco(f.blocos, x0, y0, x1, y1);
+              }
+            } catch (e) {
+              console.warn("pedaço da folha:", e);
+            }
+          }
           return { promise: tarefa.promise, cancelar: () => tarefa.cancel() };
         },
       };
@@ -363,6 +520,9 @@
       pag = Math.min(Math.max(1, pag), doc.paginas);
       const f = folhaGirada(await folha(doc, pag), giro);
       if (pedido !== this._pedido) return; // pediram outro no meio do caminho
+      const antiga = this.f?.original || this.f, nova = f.original || f;
+      if (antiga && antiga !== nova) soltarFolha(antiga);
+      nova.naTela = true;
       this.doc = doc; this.f = f; this.pag = pag; this.chave = chave; this.giro = giro;
       this.W = f.W; this.H = f.H;
       this.sb = Math.min(BASE_LADO / Math.max(f.W, f.H), Math.sqrt(BASE_AREA / (f.W * f.H)));
@@ -414,6 +574,7 @@
       this._mexeu = false;
       if (this._listaMarcas) this.marcas(this._listaMarcas);
       this.ajustar();
+      setTimeout(() => { if (pedido === this._pedido) prepararFolha(nova); }, 60);
       // onde tem desenho (para os nomes dos pontos fugirem dele): depois de o croqui aparecer
       setTimeout(() => {
         if (pedido !== this._pedido) return;
@@ -439,6 +600,7 @@
           for (let tentativa = 0; tentativa < 20; tentativa++) {
           const k = `${lad.prefixo}|${j * L + i}`;
           if (await imagemGuardada(k)) { lad.prontos.add(j * L + i); continue; }
+          await prepararFolha(f.original || f);
           await esperarTela(); // não disputa com o dedo nem com a tela desenhando
           if (lad.pedido !== this._pedido) return;
           const cv = document.createElement("canvas");
@@ -471,11 +633,11 @@
     }
 
     /** o pedaço da tela montado com os ladrilhos prontos; false se falta algum */
-    async _detalheDosLadrilhos(cv, vista, dpr) {
+    async _detalheDosLadrilhos(cv, vista, dpr, maximo = 1.08) {
       const lad = this._lad;
       if (!lad?.cols || lad.pedido !== this._pedido) return false;
       const k = (vista.s * dpr) / lad.sL; // ladrilho -> tela
-      if (k > 1.08) return false; // mais perto que o dobro: só o PDF dá nitidez
+      if (k > maximo) return false; // mais perto que o dobro: só o PDF dá nitidez
       const T = LADO_LADRILHO;
       // a parte da folha (em px dos ladrilhos) que aparece na tela
       const x0 = (-vista.tx / vista.s) * lad.sL, y0 = (-vista.ty / vista.s) * lad.sL;
@@ -691,7 +853,7 @@
       this._posicionarMarcas();
       this._tarefaLad?.cancelar(); // preparar os pedaços não pode atrasar o dedo
       clearTimeout(this._tempoDet);
-      this._tempoDet = setTimeout(() => this._desenharDetalhe(), 120);
+      this._tempoDet = setTimeout(() => this._desenharDetalhe(), 90);
     }
 
     _posicionarMarcas() {
@@ -735,6 +897,14 @@
         if (this._marcaDet !== marca) return; // veio outro gesto no meio
       } else {
         if (this._marcaDet !== marca) return;
+        // enquanto o PDF não fica pronto, os pedaços guardados aumentados (já bem mais nítidos)
+        if (await this._detalheDosLadrilhos(cv, vista, dpr, 4)) {
+          if (this._marcaDet !== marca) return;
+          this._mostrarDetalhe(cv, vista);
+        }
+        const f0 = this.f.original || this.f;
+        if (!f0.blocos) await prepararFolha(f0); // lida uma vez; depois cada foco é só o pedaço
+        if (this._marcaDet !== marca) return;
         tarefa = this.f.desenhar(cv.getContext("2d"), vista.s * dpr, -vista.tx * dpr, -vista.ty * dpr);
         this._tarefaDet = tarefa;
         try {
@@ -744,6 +914,10 @@
         }
         if (this._tarefaDet !== tarefa || this._marcaDet !== marca) return;
       }
+      this._mostrarDetalhe(cv, vista);
+    }
+    /** troca a imagem de perto pela recém-desenhada */
+    _mostrarDetalhe(cv, vista) {
       const d = this.detalhe;
       d.width = cv.width;
       d.height = cv.height;
