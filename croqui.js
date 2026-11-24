@@ -729,7 +729,7 @@
       const W = this.W, H = this.H, n = (v) => Math.round(v * 100) / 100;
       const pts = (lista) => lista.map(([x, y]) => `${n(x * W)},${n(y * H)}`).join(" ");
       this.camadaEl.innerHTML = this._camada.linhas.map((l) => `<line x1="${n(l.x1 * W)}" y1="${n(l.y1 * H)}" x2="${n(l.x2 * W)}" y2="${n(l.y2 * H)}" class="${esc(l.classe || "")}" vector-effect="non-scaling-stroke"/>`).join("")
-        + this._camada.tracos.map((t) => `<polyline points="${pts(t.pts)}" class="cq-traco ${esc(t.classe || "")}" vector-effect="non-scaling-stroke"/>`).join("");
+        + [" cq-traco-borda", ""].map((b) => this._camada.tracos.map((t) => `<polyline points="${pts(t.pts)}" class="cq-traco ${esc(t.classe || "")}${b}" vector-effect="non-scaling-stroke"/>`).join("")).join("");
     }
     /** liga o modo rascunho (`aoTerminar` recebe cada traço feito com o dedo) ou desliga (null).
      *  Um dedo desenha; dois dedos continuam movendo e aproximando o croqui. */
@@ -1238,16 +1238,16 @@
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    for (const t of tracos) {
-      if (t.length < 2) continue;
-      ctx.beginPath();
-      t.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
-      ctx.lineWidth = 3.5 * k + 3 * k;
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
-      ctx.stroke();
-      ctx.lineWidth = 3.5 * k;
-      ctx.strokeStyle = "#1d4ed8";
-      ctx.stroke();
+    // a borda branca de todos primeiro: por cima, clareava os traços de baixo
+    for (const [cor, l] of [["rgba(255, 255, 255, 0.85)", 6.5 * k], [COR_LAPIS, 4 * k]]) {
+      for (const t of tracos) {
+        if (t.length < 2) continue;
+        ctx.beginPath();
+        t.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+        ctx.lineWidth = l;
+        ctx.strokeStyle = cor;
+        ctx.stroke();
+      }
     }
     for (const l of linhas) {
       ctx.beginPath();
@@ -1311,6 +1311,7 @@
   const COR_DESTAQUE = "#e11414";
   const COR_VAO = "#7c3aed"; // vão (como na tela)
   const COR_VAO_COM = "#6d28d9";
+  const COR_LAPIS = "#0026ff"; // rascunho do campo (lápis): azul vivo
   const COR_VAO_SM = "#78350f"; // vão sem a metragem: marrom
   const COR_NOTA = "#1d4ed8"; // anotação do campo
   const PROPORCAO_RECORTE = 190 / 58; // faixa do croqui na folha de cada ponto do PDF
@@ -1588,9 +1589,9 @@
       // rascunho do campo (alteração da rede)
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      for (const t of fl.tracos || []) {
-        if (t.length < 2) continue;
-        for (const [cor, l] of [["#fff", r * 0.5 + 3], [AZUL, r * 0.5]]) {
+      for (const [cor, l] of [["#fff", r * 0.5 + 3], [COR_LAPIS, r * 0.5]]) {
+        for (const t of fl.tracos || []) {
+          if (t.length < 2) continue;
           ctx.strokeStyle = cor;
           ctx.lineWidth = l;
           ctx.beginPath();

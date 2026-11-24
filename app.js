@@ -1950,7 +1950,7 @@
   }
 
   // anotações prontas (pedido do supervisor em 18/11/2026): um toque põe o texto
-  const NOTAS_PRONTAS = ["POSTE SUBSTITUÍDO", "POSTE APROVEITADO", "VÃO SUBSTITUÍDO", "VÃO APROVEITADO"];
+  const NOTAS_PRONTAS = ["POSTE SUBSTITUÍDO", "POSTE NÃO FOI SUBSTITUÍDO", "POSTE APROVEITADO", "VÃO SUBSTITUÍDO", "VÃO APROVEITADO"];
   /** anotação aberta embaixo do croqui (nova ou já feita) */
   function folhaNotaCroqui() {
     const n = estado.cqNota;

@@ -1022,7 +1022,9 @@ body.com-croqui { overflow: hidden; overscroll-behavior: none; }
 .cq-vao-linha { stroke: #7c3aed; stroke-width: 3; stroke-dasharray: 7 5; stroke-linecap: round; opacity: 0.85; }
 .cq-vao-linha-sm { stroke: #78350f; } /* vão sem a metragem: marrom */
 .cq-vao-sel { stroke: var(--vermelho); stroke-width: 4; }
-.cq-traco { fill: none; stroke: #1d4ed8; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 1.5px #fff); }
+/* lápis: azul vivo; a borda branca de todos fica embaixo (a sombra de um clareava os outros) */
+.cq-traco { fill: none; stroke: #0026ff; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.cq-traco-borda { stroke: #fff; stroke-width: 6.5; }
 .cq-traco-vivo { stroke-width: 4; }
 .cq-visor.cq-desenhando { cursor: crosshair; }
 /* vão: losango no meio do vão e a metragem */
