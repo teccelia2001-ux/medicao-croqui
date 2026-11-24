@@ -2837,9 +2837,12 @@
     const p = ponto();
     const qtdOk = M.numero(estado.qtd) > 0;
     const ano = Number((p.dia || hoje()).slice(0, 4));
-    // tem Instalar e Retirar e nenhum dos dois lançado: botão do meio lança os dois
+    // tem Instalar e Retirar: o botão do meio lança os dois (nenhum lançado) ou soma nos dois (os
+    // dois lançados). Com um só lançado ele não aparece: lançaria um e somaria no outro sem querer
     const ins = g.opcoes.find((s) => s.operacao === "INSTALAR"), ret = g.opcoes.find((s) => s.operacao === "RETIRAR");
-    const ambos = ins && ret && !p.itens.some((i) => i.sid === ins.id || i.sid === ret.id) && g.opcoes.indexOf(ins) + 1 === g.opcoes.indexOf(ret) ? [ins, ret] : null;
+    const lancado = (s) => p.itens.some((i) => i.sid === s.id);
+    const ambos = ins && ret && lancado(ins) === lancado(ret) && g.opcoes.indexOf(ins) + 1 === g.opcoes.indexOf(ret) ? [ins, ret] : null;
+    const rotAmbos = ambos && lancado(ins) ? "Somar em instalar e retirar" : "Lançar instalar e retirar";
     return `<div class="fundo" data-acao="fechar-folha">
       <div class="folha" data-parar>
         <div class="folha-topo"><b>${esc(g.rotulo || g.codigo)}</b><button type="button" class="remover" data-acao="fechar-folha" aria-label="Fechar">×</button></div>
@@ -2852,11 +2855,11 @@
             const botao = `<button type="button" class="opcao opcao-${(s.operacao || "").toLowerCase()}${g.opSugerida === s.operacao ? " opcao-sugerida" : ""}${ja ? " opcao-somar" : ""}" data-acao="adicionar" data-sid="${s.id}" ${!qtdOk ? "disabled" : ""}>
               ${ja ? "✓ " : ""}${esc(ROTULO[s.operacao] ?? s.operacao)}<small data-valor-op="${s.id}">${textoOpcao(p, s, ano)}</small></button>`;
             // entre Instalar e Retirar: os dois de uma vez, com a mesma quantidade
-            return ambos && s === ambos[0] ? botao + `<button type="button" class="opcao-ambos" data-acao="adicionar-ambos" data-sids="${ambos.map((x) => x.id).join(",")}" data-ambos ${qtdOk ? "" : "disabled"} aria-label="Lançar instalar e retirar" title="Lançar instalar e retirar">⇅<small>os dois</small></button>` : botao;
+            return ambos && s === ambos[0] ? botao + `<button type="button" class="opcao-ambos" data-acao="adicionar-ambos" data-sids="${ambos.map((x) => x.id).join(",")}" data-ambos ${qtdOk ? "" : "disabled"} aria-label="${rotAmbos}" title="${rotAmbos}">⇅<small>os dois</small></button>` : botao;
           }).join("")}
         </div>
         ${!qtdOk ? `<small class="folha-dica">Digite a quantidade e escolha o tipo.</small>` : ""}
-        ${g.opcoes.some((s) => p.itens.some((i) => i.sid === s.id)) ? `<small class="folha-dica-soma">✓ Já lançado: digite só o que falta e toque nele para <b>somar</b>.</small>` : ""}
+        ${g.opcoes.some((s) => p.itens.some((i) => i.sid === s.id)) ? `<small class="folha-dica-soma">✓ Já lançado: digite só o que falta e toque nele para <b>somar</b>${ambos && lancado(ins) ? `, ou em <b>⇅ os dois</b> para somar em instalar e retirar de uma vez` : ""}.</small>` : ""}
       </div>
     </div>`;
   }
