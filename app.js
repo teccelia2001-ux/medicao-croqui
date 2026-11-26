@@ -2351,7 +2351,9 @@
   try { depRapidos = localStorage.getItem("croqui_rapidos") === "LV" ? "LV" : "LM"; } catch (e) { /* sem guardar */ }
 
   function rapidosHtml(p) {
-    const lista = depRapidos === "LV" ? RAPIDOS_LV : RAPIDOS;
+    let lista = depRapidos === "LV" ? RAPIDOS_LV : RAPIDOS;
+    // serviços sem ponto: os cabos (os mesmos do vão, por metro) logo no começo (pedido 26/11/2026)
+    if (p.geral && depRapidos !== "LV") lista = [["Condutor (por metro)", VAO_RAPIDOS.find(([t]) => t === "CONDUTOR")[1].map(([cod, rot]) => [cod, rot])], ...lista];
     return `<div class="dep-rapidos" role="group" aria-label="Lista pré-definida">
         ${["LM", "LV"].map((d) => `<button type="button" class="dep-rapido${d === depRapidos ? " ativo" : ""}" data-acao="dep-rapidos" data-dep="${d}" aria-pressed="${d === depRapidos}">${d}</button>`).join("")}
       </div>` + lista.map(([grupo, itens]) => `<div class="rapidos-grupo">
@@ -4039,7 +4041,8 @@
       case "rapido": {
         const g = grupos().find((x) => x.chave === alvo.dataset.chave);
         if (!g) return avisar("Esse código não está no catálogo baixado.", "erro");
-        estado.escolhido = { ...g, rotulo: alvo.dataset.rotulo };
+        // cabo lançado sem ponto: também tem o x3 (três fases)
+        estado.escolhido = { ...g, rotulo: alvo.dataset.rotulo, x3Pode: !!ponto()?.geral && CONDUTOR_X3.has(g.codigo), x3: false };
         estado.qtd = "";
         return render();
       }
