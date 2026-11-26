@@ -2323,6 +2323,8 @@
     ["Poda", [["60131", "PODA P", "P&LF"], ["60133", "PODA M", "P&LF"]]],
   ];
   const DEP_RAPIDOS = "C&M (LM)"; // departamento de quem não diz outro
+  // só na lista dos serviços sem ponto (LM), depois da armação V1
+  const SO_SEM_PONTO = [["64224", "ARMAÇÃO V2"]];
   // lista da linha viva (passada pelo supervisor em 17/11/2026). Na lista dele vieram 62172,
   // 62089 e 62251, que não existem no catálogo: usados os vizinhos com o mesmo nome
   // (60172 nivelamento protegido >= 120mm, 62086 jumper, 62252 para-raio polimérico).
@@ -2343,7 +2345,7 @@
     ["Outros", [["68049", "COBERTURA", LV_], ["62154", "CONECT BYPASS", LV_], ["62155", "DESCONECT BYPASS", LV_], ["60310", "CON ELEVAÇÃO", LV_]]],
   ];
   // nome curto: só nos botões da lista (nos lançados, no PDF e na planilha vai a descrição do contrato)
-  const NOME_CURTO = new Map([...RAPIDOS, ...RAPIDOS_LV].flatMap(([, itens]) => itens.map(([cod, rot, dep = DEP_RAPIDOS]) => [`${dep}|${cod}`, rot])));
+  const NOME_CURTO = new Map([...RAPIDOS, ...RAPIDOS_LV, ["", SO_SEM_PONTO]].flatMap(([, itens]) => itens.map(([cod, rot, dep = DEP_RAPIDOS]) => [`${dep}|${cod}`, rot])));
   const nomeNaTela = (i) => NOME_CURTO.get(`${i.departamento}|${i.codigo}`) || i.descricao;
 
   // qual lista pré-definida está na tela: LM ou LV (fica guardado no aparelho)
@@ -2353,7 +2355,11 @@
   function rapidosHtml(p) {
     let lista = depRapidos === "LV" ? RAPIDOS_LV : RAPIDOS;
     // serviços sem ponto: os cabos (os mesmos do vão, por metro) logo no começo (pedido 26/11/2026)
-    if (p.geral && depRapidos !== "LV") lista = [["Condutor (por metro)", VAO_RAPIDOS.find(([t]) => t === "CONDUTOR")[1].map(([cod, rot]) => [cod, rot])], ...lista];
+    if (p.geral && depRapidos !== "LV") {
+      lista = [["Condutor (por metro)", VAO_RAPIDOS.find(([t]) => t === "CONDUTOR")[1].map(([cod, rot]) => [cod, rot])], ...lista];
+      // e a armação V2 junto da V1, nas estruturas BT (pedido 26/11/2026)
+      lista = lista.map(([g, itens]) => [g, itens.flatMap((it) => (it[0] === "64223" ? [it, ...SO_SEM_PONTO] : [it]))]);
+    }
     return `<div class="dep-rapidos" role="group" aria-label="Lista pré-definida">
         ${["LM", "LV"].map((d) => `<button type="button" class="dep-rapido${d === depRapidos ? " ativo" : ""}" data-acao="dep-rapidos" data-dep="${d}" aria-pressed="${d === depRapidos}">${d}</button>`).join("")}
       </div>` + lista.map(([grupo, itens]) => `<div class="rapidos-grupo">
