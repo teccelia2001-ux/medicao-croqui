@@ -625,6 +625,24 @@ a.botao { text-decoration: none; }
     scrollbar-width: thin;
     padding: 2px 8px 12px 2px; /* sombra dos cartões e espaço para a barra */
   }
+  /* medição: o mesmo, a coluna de gerar e a da conferência rolam cada uma sozinha */
+  .pagina-larga:has(> .medicao-colunas) {
+    height: 100dvh;
+    padding-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .pagina-larga > .medicao-colunas { flex: 1; min-height: 0; align-items: stretch; }
+  .medicao-colunas > .medicao-col,
+  .medicao-colunas > .medicao-col:first-child {
+    position: static;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    padding: 2px 8px 12px 2px;
+  }
 }
 
 /* troca entre app e painel */
